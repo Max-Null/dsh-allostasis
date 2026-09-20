@@ -25,4 +25,19 @@ describe('anchorText', () => {
     expect(text).toContain('turn 2 step 9')
     expect(text).not.toContain('turn 1')
   })
+
+  it('第二次起换口径并带上序号——重复提醒不能是纯噪音', () => {
+    const metrics = measureThinking('placeholder')
+    const first = anchorText(1, 1, metrics, 1)
+    const third = anchorText(1, 3, metrics, 3)
+    expect(first).toContain('⚠️ 语言漂移提醒（应变）：')
+    expect(first).not.toContain('第 1 次')
+    expect(third).toContain('第 3 次')
+    expect(third).toContain('你仍然在用英文思考')
+  })
+
+  it('省略 reminder 时与第 1 次完全一致', () => {
+    const metrics = measureThinking('placeholder')
+    expect(anchorText(2, 2, metrics)).toBe(anchorText(2, 2, metrics, 1))
+  })
 })

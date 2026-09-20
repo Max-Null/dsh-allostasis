@@ -3,7 +3,8 @@
  *
  * 第一期只实现一个能力——**中文锚定**：每个 step 之前读最近一条思考，若判定为语言
  * 漂移（英文功能词密度越线），就在请求末尾追加一条中文锚定消息。**平时不出现、漂移
- * 时才出现**——稀缺是它作为信号的前提。
+ * 时才出现**——按需出现是它作为信号的前提。但漂移持续时也不每个 step 都提醒：同一
+ * turn 至多一次，见 `throttle.ts`。
  *
  * 为什么不挂到 system prompt 前缀上：那是 `dsh-chinese-thinking` 的位置，它作为基线
  * 永远在场。而基线在长会话里会失效（固定前缀离输出最远，语言模式受近因支配）。本插件
@@ -23,6 +24,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { anchorText } from './anchor.ts'
 import { measureThinking, verdict } from './drift.ts'
 import { latestThinking } from './thinking.ts'
+import { admitAnchor, type AnchorThrottleState } from './throttle.ts'
 
 /** Cordis 插件名，同时用作注入消息的 `source.plugin` 与 section 名。 */
 export const name = 'dsh-allostasis'
@@ -39,6 +41,9 @@ export { anchorText }
  * @param ctx - 插件上下文。
  */
 export function apply(ctx: Context): void {
+  /** 每个会话一份节流状态；用 WeakMap 以免会话销毁后残留。 */
+  const throttles = new WeakMap<object, AnchorThrottleState>()
+
   ctx.on('agent/pre-step', async ({ agent, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
@@ -46,7 +51,10 @@ export function apply(ctx: Context): void {
     if (sample === undefined) return decision
     const metrics = measureThinking(sample.text)
     if (verdict(metrics) !== 'drift') return decision
-    const text = anchorText(sample.turn, sample.step, metrics)
+    const advanced = admitAnchor(throttles.get(agent.session), sample.turn)
+    if (advanced === undefined) return decision
+    throttles.set(agent.session, advanced)
+    const text = anchorText(sample.turn, sample.step, metrics, advanced.count)
     return {
       ...decision,
       messages: [
