@@ -1,0 +1,6 @@
+# dsh-allostasis bundle patch: one insert over the profile root.
+# `system-prompt` / `agents` / `token-meter` already live in the host (dsh-base);
+# this adds only the allostasis plugin, which registers its own reminders.
+- insert:
+    - id: allostasis
+      name: '@max-null/dsh-allostasis'

@@ -1,0 +1,10 @@
+{
+  // 构建配置：emit dist，只编译 src。paths 与 typecheck 相同（lib/types）。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}
