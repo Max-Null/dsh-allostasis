@@ -120,6 +120,15 @@ function loopMessage(
  */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)
+  // 留痕：本插件没有任何界面元素，命中时也只在轨迹页留一行摘要，因此「装了没有、
+  // 生效阈值是多少、每步判成了什么」必须能从日志直接读到——否则装上了也无从判断，
+  // 更无从测试（2026-09-29：确认不了它是否加载）。加载行用 info（每个进程一次）；
+  // 判定行走 debug，默认静默、排查时打开即可，不必为了看一眼判定去改阈值试。
+  console.info(
+    `[${name}] loaded · driftThreshold=${resolved.driftThreshold}`
+    + ` repetitionThreshold=${resolved.repetitionThreshold}`
+    + ` consecutiveSteps=${resolved.consecutiveSteps}`,
+  )
   /** 每个会话各一份状态；用 WeakMap 以免会话销毁后残留。 */
   const anchorThrottles = new WeakMap<object, PerTurnThrottleState>()
   const loopThrottles = new WeakMap<object, PerTurnThrottleState>()
@@ -130,6 +139,17 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (decision.kind === 'reject' || signal.aborted) return decision
     const sample = latestThinking(agent.session)
     if (sample === undefined) return decision
+    // 诊断行与下面的判定各算一次度量：两者都是纯字符串统计，重复计算的代价远低于
+    // 让 metrics 在三个函数之间穿梭带来的耦合。
+    const dMetrics = measureThinking(sample.text)
+    const rMetrics = measureRepetition(sample.text)
+    console.debug(
+      `[${name}] turn ${sample.turn} step ${sample.step}`
+      + ` · drift=${verdict(dMetrics, resolved.driftThreshold)}`
+      + ` funcDensity=${(dMetrics.funcDensity * 100).toFixed(1)}% chars=${dMetrics.chars}`
+      + ` · repetition=${repetitionVerdict(rMetrics, resolved.repetitionThreshold)}`
+      + ` units=${rMetrics.units} ratio=${(rMetrics.ratio * 100).toFixed(0)}%`,
+    )
     const appended: UserMessage[] = []
     const drift = driftMessage(agent.session, sample, resolved, anchorThrottles)
     if (drift !== undefined) appended.push(drift)
