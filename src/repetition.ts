@@ -86,11 +86,15 @@ export function measureRepetition(text: string): RepetitionMetrics {
  * 单元数不足 `MIN_UNITS` 时返回 `insufficient`——**不下结论**。调用方据此决定该步
  * 既不算越线也不算清白（见 `trackLoop`）。
  * @param metrics - 量化结果。
+ * @param threshold - 重复率阈值；缺省用 {@link REPETITION_THRESHOLD}。
  * @returns 三态判定。
  */
-export function repetitionVerdict(metrics: RepetitionMetrics): RepetitionVerdict {
+export function repetitionVerdict(
+  metrics: RepetitionMetrics,
+  threshold: number = REPETITION_THRESHOLD,
+): RepetitionVerdict {
   if (metrics.units < MIN_UNITS) return 'insufficient'
-  return metrics.ratio >= REPETITION_THRESHOLD ? 'loop' : 'normal'
+  return metrics.ratio >= threshold ? 'loop' : 'normal'
 }
 
 /** 连续越线的追踪状态。不可变——每次推进都返回一份新状态。 */
@@ -114,16 +118,18 @@ export interface LoopTrackerState {
  * @param state - 上一次的状态；首次调用传 `undefined`。
  * @param turn - 产出该思考的 turn。
  * @param verdict - 该步的判定。
+ * @param required - 触发所需的连续越线步数；缺省用 {@link CONSECUTIVE_STEPS}。
  * @returns `state` 为推进后的新状态；`fire` 为本次是否达到触发条件。
  */
 export function trackLoop(
   state: LoopTrackerState | undefined,
   turn: number,
   verdict: RepetitionVerdict,
+  required: number = CONSECUTIVE_STEPS,
 ): { state: LoopTrackerState; fire: boolean } {
   const current = state ?? { consecutive: 0, lastTurn: Number.NaN }
   const base = current.lastTurn === turn ? current.consecutive : 0
   if (verdict === 'insufficient') return { state: { consecutive: base, lastTurn: turn }, fire: false }
   const consecutive = verdict === 'loop' ? base + 1 : 0
-  return { state: { consecutive, lastTurn: turn }, fire: consecutive >= CONSECUTIVE_STEPS }
+  return { state: { consecutive, lastTurn: turn }, fire: consecutive >= required }
 }

@@ -20,6 +20,7 @@
       "@deepseek-ai/dsh-agent": ["../../deepseek-harness/packages/core/agent/lib/types"],
       "@deepseek-ai/dsh-llm": ["../../deepseek-harness/packages/llm/llm/lib/types"],
       "@deepseek-ai/dsh-session": ["../../deepseek-harness/packages/core/session/lib/types"],
+      "@deepseek-ai/dsh-session/types": ["../../deepseek-harness/packages/core/session/lib/types/types"],
       "@deepseek-ai/dsh-system-prompt": ["../../deepseek-harness/packages/core/system-prompt/lib/types"],
       "@deepseek-ai/dsh-token-meter": ["../../deepseek-harness/packages/llm/token-meter/lib/types"]
     }

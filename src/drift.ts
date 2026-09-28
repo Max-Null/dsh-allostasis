@@ -66,8 +66,13 @@ export function measureThinking(text: string): DriftMetrics {
   }
 }
 
-/** 对一次测量下判定。 */
-export function verdict(metrics: DriftMetrics): DriftVerdict {
+/**
+ * 对一次测量下判定。
+ * @param metrics - 量化结果。
+ * @param threshold - 功能词密度阈值；缺省用 {@link DRIFT_THRESHOLD}。
+ * @returns 三态判定。
+ */
+export function verdict(metrics: DriftMetrics, threshold: number = DRIFT_THRESHOLD): DriftVerdict {
   if (metrics.words < MIN_WORDS) return 'insufficient'
-  return metrics.funcDensity >= DRIFT_THRESHOLD ? 'drift' : 'chinese'
+  return metrics.funcDensity >= threshold ? 'drift' : 'chinese'
 }
