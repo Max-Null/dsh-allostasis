@@ -25,6 +25,16 @@ repetition (**degeneration reminder**).
 退化触发时还会 append 一条 `allostasis/degeneration` 事件，记下当时的重复率、阈值与连续步数，
 因此「插件当时判了什么、用的什么阈值」可事后重建。
 
+**它全程静默，所以「确认它在工作」只能靠日志。** 本插件没有任何界面元素，命中时也只在轨迹页留一行；不命中时一个字都不说——「装了没有」「阈值生效没有」「这一步为什么没提醒」三个问题原本都无从回答，只能靠改配置去试。因此它在 `src/index.ts` 的 `apply` 里留两行痕：
+
+```
+[dsh-allostasis] loaded · driftThreshold=0.15 repetitionThreshold=0.5 consecutiveSteps=2
+[dsh-allostasis] turn 8 step 11 · drift=chinese funcDensity=0.6% chars=1764
+                 · repetition=normal units=29 ratio=0%
+```
+
+第一行 `info`、每个进程一次，报的是**生效阈值**（`Config` 的解析结果，不是代码里的缺省常量）。第二行 `debug`、**每一步判定一行**：两类判据的三态结论加度量。默认静默，排查时打开即可——不必为了看一眼判定结果去动阈值。其中 `units` 是切分后的单元数，**低于 12 判 `insufficient`**（样本不足不下结论），此时 `ratio` 仍会给出，只是不参与判定。
+
 判据来源、实测数据与完整设计见 `docs/设计/2026-09-20-应变-设计方案.md`、
 `docs/设计/2026-09-28-应变二期-退化检测与自动干预.md`。
 
