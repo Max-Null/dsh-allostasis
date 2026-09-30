@@ -35,11 +35,10 @@ export function SilentTurnNotice({ turn, t }: SilentTurnNoticeProps): ReactNode 
   if (data === undefined) return null
   return (
     <div style={wrap} role="status" data-allostasis-silent-turn={data.turn}>
-      <span style={headline}>
-        {t('silent.headline')}
-        {data.steered ? <span style={steered}>{t('silent.steered')}</span> : null}
+      <span style={headline}>{t('silent.headline')}</span>
+      <span style={hint}>
+        {data.reasoningChars > 0 ? t('silent.hintReasoned') : t('silent.hintEmpty')}
       </span>
-      <span style={hint}>{t('silent.hint')}</span>
     </div>
   )
 }
@@ -60,7 +59,5 @@ const wrap = {
 } as const
 
 const headline = { color: 'var(--dsw-alias-label-primary)', fontWeight: 600 } as const
-
-const steered = { marginLeft: '6px', fontWeight: 400, opacity: 0.75 } as const
 
 const hint = { opacity: 0.85 } as const

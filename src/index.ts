@@ -6,9 +6,20 @@
  * · **一期 · 中文锚定**（`agent/pre-step`）：判定为语言漂移（英文功能词密度越线）就追加
  *   一条中文锚定消息。
  * · **二期 · 退化提醒**（`agent/pre-step`）：判定为推理退化（重复率越线且连续若干步成立）
- *   就追加减速提醒，并向会话日志 append 一条 `allostasis/degeneration` 记录判定依据。
- * · **空回合检测**（`agent/turn-stopping`）：回合收尾时末条助手消息没有非空文本，向会话
- *   日志 append 一条 `allostasis/silent-turn`。
+ *   就追加减速提醒。
+ * · **空回合检测**（`agent/turn-stopping`）：回合收尾时末条助手消息没有非空文本即判定成立，
+ *   `steer` 档位下追加一次补生成。
+ *
+ * **判定结果不写会话日志**。会话日志的事件词汇表 `KNOWN_SESSION_EVENT_TYPES` 由内核在构建期
+ * 生成，下游插件的事件类型不在其中；`Session.append()` 的封装
+ * （`packages/core/session/src/index.ts:744-750`）没有 `ignorable` 通道，而
+ * `SessionEvent.ignorable` 的契约要求这类「丢失不影响重建」的记录必须自带该标记
+ * （`packages/core/session/src/types.ts:501-511`）。缺标记的自定义类型会让**整份**日志在下次
+ * 加载时被拒读（`packages/session/session-persistence/src/storage-contract.ts:75-80`）——
+ * 2026-10-01 实测：dev 与装版各有会话因此打不开。判定输入本来就可重放（推理原文在
+ * `reasoning-chunks.texts`、回合边界在 `turn/start` / `turn/end`），留痕因此改由本模块的
+ * `console.debug` 诊断行与浏览器半边的提示承担；浏览器半边自行从事件流折叠判定，
+ * 见 `client/silent-turn.ts`。
  *
  * 前两个共用 `agent/pre-step`，因为它们读同一份输入——最近一条思考。空回合读的是另一种
  * 输入（这一轮最终产出了什么），而且**它之后没有下一步**，`pre-step` 不会被再次调用，
@@ -42,7 +53,6 @@ import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import { anchorText } from './anchor.ts'
 import { Config, resolveConfig, type ResolvedConfig } from './config.ts'
 import { measureThinking, verdict } from './drift.ts'
-import { degenerationEvent, silentTurnEvent } from './events.ts'
 import { degenerationText, pluginNotice, silentTurnText } from './messages.ts'
 import { name } from './name.ts'
 import { measureRepetition, repetitionVerdict, trackLoop, type LoopTrackerState } from './repetition.ts'
@@ -81,7 +91,7 @@ function driftMessage(
 }
 
 /**
- * 组装二期的推理退化提醒，并落下判定依据。
+ * 组装二期的推理退化提醒。
  *
  * 追踪状态**每步都推进**，包括被节流挡住的那几步：计数描述的是退化本身持续了多久，
  * 与「这一步有没有说出口」无关。
@@ -107,14 +117,6 @@ function loopMessage(
   const advanced = admitPerTurn(throttles.get(session), sample.turn)
   if (advanced === undefined) return undefined
   throttles.set(session, advanced)
-  session.append('allostasis/degeneration', degenerationEvent({
-    turn: sample.turn,
-    step: sample.step,
-    metrics,
-    consecutive: tracked.state.consecutive,
-    threshold: resolved.repetitionThreshold,
-    required: resolved.consecutiveSteps,
-  }))
   return pluginNotice(
     degenerationText(sample.turn, sample.step, metrics, advanced.count),
     `推理退化 · turn ${sample.turn} · 重复率 ${(metrics.ratio * 100).toFixed(0)}%`,
@@ -122,7 +124,7 @@ function loopMessage(
 }
 
 /**
- * 注册回合收尾监听：检出空回合，落一条判定事件；`steer` 档位下追加一次补生成。
+ * 注册回合收尾监听：检出空回合；`steer` 档位下追加一次补生成。
  *
  * **为什么整段包 try/catch**：内核的契约测试写明该事件里抛出的异常会让 turn 以 error
  * 结束（`packages/core/agent-loop/tests/contract-regressions.spec.ts:357`，loop 本身
@@ -137,8 +139,7 @@ function loopMessage(
  * **补生成的记账发生在发送之前**：`turn-stopping` 是可能重入的边界，先记账才能保证同一次
  * 补生成不会被投两遍——与 `fenceFeedback` 同一条约束。
  *
- * **补生成单独包一层 catch**：判定已经成立并落了留痕，补生成失败不该回滚那条记录，也不该
- * 升级成回合失败。
+ * **补生成单独包一层 catch**：判定已经成立，补生成失败不该升级成回合失败。
  * @param ctx - 插件上下文。
  * @param resolved - 已校验的配置。
  * @param steers - 补生成的节流状态表，按会话各一份。
@@ -158,7 +159,6 @@ function installSilentTurn(
       if (shape === undefined || tailVerdict(shape) !== 'silent') return
       const plan = resolved.silentTurn === 'steer' ? admitPerTurn(steers.get(session), turn) : undefined
       if (plan !== undefined) steers.set(session, plan)
-      session.append('allostasis/silent-turn', silentTurnEvent({ turn, shape, steered: plan !== undefined }))
       console.debug(
         `[${name}] 空回合 · turn ${turn} step ${shape.step}`
         + ` · reasoning ${shape.reasoningChars} 字`

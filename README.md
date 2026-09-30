@@ -25,11 +25,11 @@ notice beneath that turn.
 
 前两类提醒以 `notice` 形式注入——在**轨迹页**是折叠态就显示一行摘要的注入行，不弹窗、不打断；
 **对话页不显示**（2026-09-29 在 SSiD dev / DSH 0.2.0-rc.1 上实测，口径见二期方案 §九）。
-退化触发时还会 append 一条 `allostasis/degeneration` 事件，记下当时的重复率、阈值与连续步数，
-因此「插件当时判了什么、用的什么阈值」可事后重建。
 
 **空回合提示是三者里唯一有界面的一个**，就挂在那一段空白下面（见「截图」段）。它不发消息、不改模型输入——
-宿主只把判定 append 成一条 `allostasis/silent-turn` 事件，浏览器半边把那条事件投影成 Turn 尾部的一行提示。
+浏览器半边从 `turn/start` / `assistant/message` / `turn/end` 自己折叠出判定，投影成 Turn 尾部的一行提示。
+
+**判定结果不写会话日志。** 内核的事件词汇表在构建期生成，下游插件的自定义类型不在其中，而 `Session.append()` 没有 `ignorable` 标记通道；无标记的自定义事件会让**整份**日志在下次加载时被拒读。判定输入本来就可重放，留痕由 `console.debug` 诊断行与界面上那行提示承担。理由与取证见 `docs/设计/2026-09-30-空回合检测与可见化.md` §十一。
 
 **除空回合外全程静默，所以「确认它在工作」只能靠日志。** 前两类命中时只在轨迹页留一行；不命中时一个字都不说——「装了没有」「阈值生效没有」「这一步为什么没提醒」三个问题原本都无从回答，只能靠改配置去试。因此它在 `src/index.ts` 的 `apply` 里留两行痕：
 
@@ -104,7 +104,9 @@ Installs as a bundle: `dsh plugin --profile <name> add @max-null/dsh-allostasis`
 | `driftThreshold` | `0.15` | 英文功能词密度达到此值即判为漂移 |
 | `repetitionThreshold` | `0.5` | 推理重复率阈值，取值 0–1 |
 | `consecutiveSteps` | `2` | 连续多少步越线才触发退化提醒 |
-| `silentTurn` | `observe` | 空回合档位：`off` 不检测、`observe` 只判定并留痕、`steer` 额外补一次生成 |
+| `silentTurn` | `observe` | 空回合档位：`off` 宿主不判定也不干预、`observe` 判定并打一行诊断、`steer` 额外补一次生成 |
+
+**档位管不到对话页那行提示**：提示由浏览器半边折叠会话事件流得出，与宿主判据同源但独立于档位——浏览器半边的 `apply` 拿不到插件配置（2026-10-01 实测：在 `cordis.patch.yml` 里配 `silentTurn: off`，宿主读到 `off`，浏览器半边收到空对象）。要完全静默请禁用插件。
 
 ```yaml
 - id: allostasis
