@@ -23,7 +23,13 @@
       "@deepseek-ai/dsh-session": ["../../deepseek-harness/packages/core/session/lib/types"],
       "@deepseek-ai/dsh-session/types": ["../../deepseek-harness/packages/core/session/lib/types/types"],
       "@deepseek-ai/dsh-system-prompt": ["../../deepseek-harness/packages/core/system-prompt/lib/types"],
-      "@deepseek-ai/dsh-token-meter": ["../../deepseek-harness/packages/llm/token-meter/lib/types"]
+      "@deepseek-ai/dsh-token-meter": ["../../deepseek-harness/packages/llm/token-meter/lib/types"],
+      "@deepseek-ai/dsh-client-locale/client": ["../../deepseek-harness/packages/client/locale/lib/types/client"],
+      "@deepseek-ai/dsh-client-ui-chat/client": ["../../deepseek-harness/packages/client/ui-chat/lib/types/client"],
+      "@deepseek-ai/dsh-client-ui-conversation/client": ["../../deepseek-harness/packages/client/ui-conversation/lib/types/client"],
+      "@deepseek-ai/dsh-client-ui-primitives": ["../../deepseek-harness/packages/client/ui-primitives/lib/types"],
+      "@deepseek-ai/dsh-client-ui-renderer/client": ["../../deepseek-harness/packages/client/ui-renderer/lib/types/client"],
+      "@deepseek-ai/dsh-client-ui-slots": ["../../deepseek-harness/packages/client/ui-slots/lib/types"]
     }
   },
   "include": ["src", "test"]

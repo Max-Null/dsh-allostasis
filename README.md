@@ -7,7 +7,9 @@ This plugin belongs to the **`@max-null/*` family** — a set of plugins that to
 Allostasis for the DeepSeek Harness — session self-regulation rather than monitoring.
 Before each step it reads the most recent reasoning block and appends one near-end message
 when that thinking has drifted into English (**Chinese anchoring**) or collapsed into
-repetition (**degeneration reminder**).
+repetition (**degeneration reminder**). When a turn ends with no visible output at all
+(**silent turn**), it records the verdict in the session log and the browser half shows a
+notice beneath that turn.
 
 ## 它做什么
 
@@ -17,15 +19,19 @@ repetition (**degeneration reminder**).
 |---|---|---|
 | **中文锚定** | **已实现** | 上一步思考的英文功能词密度越线 |
 | **推理退化提醒** | **已实现** | 上一步思考的重复率越线，且连续 N 步成立 |
+| **空回合提示** | **已实现** | 回合收尾时末条助手消息没有非空文本（只在 `completed` 回合上判） |
 | 上下文占用感知 | 计划中 | 需先定「什么情况下才出现」（持续在场会退化成背景音） |
 | 压缩预约落盘 | 计划中 | 待通路验证：退化样本散布在整段退化区间，「只压一小段」能否打断循环尚无证据（二期方案 §八.1） |
 
-两类提醒都以 `notice` 形式注入——在**轨迹页**是折叠态就显示一行摘要的注入行，不弹窗、不打断；
+前两类提醒以 `notice` 形式注入——在**轨迹页**是折叠态就显示一行摘要的注入行，不弹窗、不打断；
 **对话页不显示**（2026-09-29 在 SSiD dev / DSH 0.2.0-rc.1 上实测，口径见二期方案 §九）。
 退化触发时还会 append 一条 `allostasis/degeneration` 事件，记下当时的重复率、阈值与连续步数，
 因此「插件当时判了什么、用的什么阈值」可事后重建。
 
-**它全程静默，所以「确认它在工作」只能靠日志。** 本插件没有任何界面元素，命中时也只在轨迹页留一行；不命中时一个字都不说——「装了没有」「阈值生效没有」「这一步为什么没提醒」三个问题原本都无从回答，只能靠改配置去试。因此它在 `src/index.ts` 的 `apply` 里留两行痕：
+**空回合提示是三者里唯一有界面的一个**，就挂在那一段空白下面（见「截图」段）。它不发消息、不改模型输入——
+宿主只把判定 append 成一条 `allostasis/silent-turn` 事件，浏览器半边把那条事件投影成 Turn 尾部的一行提示。
+
+**除空回合外全程静默，所以「确认它在工作」只能靠日志。** 前两类命中时只在轨迹页留一行；不命中时一个字都不说——「装了没有」「阈值生效没有」「这一步为什么没提醒」三个问题原本都无从回答，只能靠改配置去试。因此它在 `src/index.ts` 的 `apply` 里留两行痕：
 
 ```
 [dsh-allostasis] loaded · driftThreshold=0.15 repetitionThreshold=0.5 consecutiveSteps=2
@@ -70,10 +76,13 @@ repetition (**degeneration reminder**).
 
 ## 截图
 
-本插件是**会话行为调节类**：不新增任何按钮、面板或设置项。它每个 step 前读取最近一条思考，判定为语言漂移或推理退化时向请求末尾追加一条提醒，效果体现在模型行为上。
+空回合提示：宿主判定「这一轮没有产出内容」之后，对话页在该回合尾部显示一行说明。它贴着那一段空白，回看历史时也还在原处。
 
-> 按《SSiD 开发手册》§9 截图规范：截图须回答「装完会多出/变成什么」的**入口与面板**。
-> 本插件无界面元素（no UI surface），故**不适用**该项要求，改以上述行为效果说明代替。
+| 空回合提示 |
+|---|
+| ![空回合提示](docs/shots/silent-turn-1.png) |
+
+其余两个能力（中文锚定、推理退化提醒）是**提示注入类**：不新增按钮、面板或设置项，每个 step 前读取最近一条思考，判定越线时向请求末尾追加一条提醒，效果体现在模型行为上——那两项按《SSiD 开发手册》§9 走无 UI 插件豁免，只有空回合提示有界面元素。
 
 ## Compose
 
@@ -88,13 +97,14 @@ Installs as a bundle: `dsh plugin --profile <name> add @max-null/dsh-allostasis`
 
 ## Config
 
-三个判定阈值可在 `config` 段覆盖；省略即用括号内的默认值。
+三个判定阈值加一个空回合档位可在 `config` 段覆盖；省略即用括号内的默认值。
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
 | `driftThreshold` | `0.15` | 英文功能词密度达到此值即判为漂移 |
 | `repetitionThreshold` | `0.5` | 推理重复率阈值，取值 0–1 |
 | `consecutiveSteps` | `2` | 连续多少步越线才触发退化提醒 |
+| `silentTurn` | `observe` | 空回合档位：`off` 不检测、`observe` 只判定并留痕、`steer` 额外补一次生成 |
 
 ```yaml
 - id: allostasis

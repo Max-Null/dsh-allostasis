@@ -1,10 +1,13 @@
 {
-  // 构建配置：emit dist，只编译 src。paths 与 typecheck 相同（lib/types）。
+  // 构建配置：emit dist，只编译 src 的 host 半边。paths 与 typecheck 相同（lib/types）。
+  // src/client 由 tsdown 打成单入口 CJS bundle，tsc 逐文件转译出的 ESM 版本没有消费者，
+  // 留在 dist 里只会与 `dist/client.js` 同名不同物，所以在这里排除。
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/client"]
 }
