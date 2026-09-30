@@ -43,7 +43,7 @@ import { anchorText } from './anchor.ts'
 import { Config, resolveConfig, type ResolvedConfig } from './config.ts'
 import { measureThinking, verdict } from './drift.ts'
 import { degenerationEvent, silentTurnEvent } from './events.ts'
-import { degenerationText, pluginNotice } from './messages.ts'
+import { degenerationText, pluginNotice, silentTurnText } from './messages.ts'
 import { name } from './name.ts'
 import { measureRepetition, repetitionVerdict, trackLoop, type LoopTrackerState } from './repetition.ts'
 import { measureTail, tailSamples, tailVerdict } from './tail.ts'
@@ -122,7 +122,7 @@ function loopMessage(
 }
 
 /**
- * 注册回合收尾监听：检出空回合并落一条判定事件。
+ * 注册回合收尾监听：检出空回合，落一条判定事件；`steer` 档位下追加一次补生成。
  *
  * **为什么整段包 try/catch**：内核的契约测试写明该事件里抛出的异常会让 turn 以 error
  * 结束（`packages/core/agent-loop/tests/contract-regressions.spec.ts:357`，loop 本身
@@ -133,25 +133,45 @@ function loopMessage(
  * 结果（实测 22 轮里 12 轮），子代理的回合属于父回复的中间产物——两者都不该计入空回合，
  * 前者由 `signal.aborted` 判、后者由会话头的 `parentSession` 判，两条先例见
  * `@changfenhuang/dsh-genui` 的 `fenceFeedback`。
+ *
+ * **补生成的记账发生在发送之前**：`turn-stopping` 是可能重入的边界，先记账才能保证同一次
+ * 补生成不会被投两遍——与 `fenceFeedback` 同一条约束。
+ *
+ * **补生成单独包一层 catch**：判定已经成立并落了留痕，补生成失败不该回滚那条记录，也不该
+ * 升级成回合失败。
  * @param ctx - 插件上下文。
  * @param resolved - 已校验的配置。
+ * @param steers - 补生成的节流状态表，按会话各一份。
  */
-function installSilentTurn(ctx: Context, resolved: ResolvedConfig): void {
+function installSilentTurn(
+  ctx: Context,
+  resolved: ResolvedConfig,
+  steers: WeakMap<object, PerTurnThrottleState>,
+): void {
   ctx.on('agent/turn-stopping', ({ agent, turn, signal }): void => {
     try {
       if (resolved.silentTurn === 'off') return
       if (signal.aborted) return
       if (agent.session.header.parentSession !== undefined) return
-      const shape = measureTail(tailSamples(agent.session.snapshotEvents()), turn)
+      const { session } = agent
+      const shape = measureTail(tailSamples(session.snapshotEvents()), turn)
       if (shape === undefined || tailVerdict(shape) !== 'silent') return
-      agent.session.append('allostasis/silent-turn', silentTurnEvent({ turn, shape, steered: false }))
+      const plan = resolved.silentTurn === 'steer' ? admitPerTurn(steers.get(session), turn) : undefined
+      if (plan !== undefined) steers.set(session, plan)
+      session.append('allostasis/silent-turn', silentTurnEvent({ turn, shape, steered: plan !== undefined }))
       console.debug(
         `[${name}] 空回合 · turn ${turn} step ${shape.step}`
         + ` · reasoning ${shape.reasoningChars} 字`
         + ` blocks=reasoning×${shape.blocks.reasoning} text×${shape.blocks.text}`
-        + ` tool×${shape.blocks.toolCalls}`,
+        + ` tool×${shape.blocks.toolCalls}`
+        + ` steered=${plan !== undefined}`,
       )
-      // `steer` 档位（追加一次补生成）待边界落地后接在这里；当前与 `observe` 同行为。
+      if (plan === undefined) return
+      try {
+        agent.steer(pluginNotice(silentTurnText(turn, shape), `空回合 · turn ${turn} · 补一次生成`))
+      } catch (error: unknown) {
+        ctx.logger?.warn?.(`${name}: silent-turn steer failed (${error instanceof Error ? error.message : String(error)})`)
+      }
     } catch (error: unknown) {
       ctx.logger?.warn?.(`${name}: silent-turn check failed (${error instanceof Error ? error.message : String(error)})`)
     }
@@ -181,6 +201,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const anchorThrottles = new WeakMap<object, PerTurnThrottleState>()
   const loopThrottles = new WeakMap<object, PerTurnThrottleState>()
   const loopTrackers = new WeakMap<object, LoopTrackerState>()
+  const silentSteers = new WeakMap<object, PerTurnThrottleState>()
 
   ctx.on('agent/pre-step', async ({ agent, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
@@ -207,5 +228,5 @@ export function apply(ctx: Context, config: Config = {}): void {
     return { ...decision, messages: [...decision.messages, ...appended] }
   }, { prepend: true })
 
-  installSilentTurn(ctx, resolved)
+  installSilentTurn(ctx, resolved, silentSteers)
 }

@@ -35,9 +35,12 @@ export interface Config {
   /**
    * 空回合兜底的档位（默认 `observe`）。
    *
-   * `off` 连判定都不做；`observe` 判定并落 `allostasis/silent-turn` 事件；`steer` 额外
-   * 追加一次补生成。**`steer` 尚未实现**，取值会在解析时被接受但行为等同 `observe`，
-   * 直到补生成的边界（每回合一次、取消的回合不触发）落地。
+   * `off` 连判定都不做；`observe` 判定并落 `allostasis/silent-turn` 事件；`steer` 在
+   * 判定之外追加一次补生成请求。补生成受两条边界约束：同一回合至多一次（`throttle.ts`），
+   * 取消的回合与子代理会话不触发（见 `index.ts` 的 `installSilentTurn`）。
+   *
+   * **默认取 `observe` 而不是 `steer`**：补生成能不能改变采样轨迹尚未验证
+   * （设计文档 §六.1），先让它只观测、由使用者显式打开。
    */
   silentTurn?: SilentTurnMode
 }

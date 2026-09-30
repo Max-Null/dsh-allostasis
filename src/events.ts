@@ -111,7 +111,7 @@ export interface SilentTurnEvent {
   reasoningChars: number
   /** 末条消息按类型的块计数。 */
   blocks: { reasoning: number; text: number; toolCalls: number }
-  /** 本次是否 steer 了补生成；观测期恒 `false`。 */
+  /** 本次是否触发了补生成（`steer` 档位且节流放行）；`observe` 档位下恒 `false`。 */
   steered: boolean
 }
 

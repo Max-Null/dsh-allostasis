@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
-import { degenerationText, pluginNotice } from '../src/messages.ts'
+import { degenerationText, pluginNotice, silentTurnText } from '../src/messages.ts'
 import { SOURCE_KIND } from '../src/name.ts'
 import type { RepetitionMetrics } from '../src/repetition.ts'
+import type { TailShape } from '../src/tail.ts'
 import { CONTEXT_SUMMARY_MAX_CHARS } from '@deepseek-ai/dsh-llm'
 
 /** 落盘形态的 source——`JSON.stringify` 丢掉 undefined 字段，正是日志里看到的样子。 */
@@ -13,6 +14,18 @@ function sourceOf(message: UserMessage): Record<string, unknown> {
 /** 一份形状合法的最小量化结果；各用例只覆盖自己关心的字段。 */
 function metrics(over: Partial<RepetitionMetrics> = {}): RepetitionMetrics {
   return { units: 46, repeated: 31, ratio: 0.6, top: [{ unit: '好', count: 49 }], ...over }
+}
+
+/** 一份形状最小的末步形态；各用例只覆盖自己关心的字段。 */
+function shape(over: Partial<TailShape> = {}): TailShape {
+  return {
+    turn: 9,
+    step: 31,
+    textChars: 0,
+    reasoningChars: 3747,
+    blocks: { reasoning: 1, text: 0, toolCalls: 0 },
+    ...over,
+  }
 }
 
 describe('SOURCE_KIND', () => {
@@ -87,5 +100,34 @@ describe('degenerationText', () => {
     const text = degenerationText(1, 1, metrics())
     expect(text).toContain('够就直接给结论')
     expect(text).toContain('换一个与前面不同的动作')
+  })
+})
+
+describe('silentTurnText', () => {
+  it('说清末步产出了什么——推理字数进正文，模型才知道自己停在哪一步', () => {
+    const text = silentTurnText(9, shape())
+    expect(text).toContain('turn 9')
+    expect(text).toContain('3747 字')
+  })
+
+  it('推理为空时不写「生成了 0 字推理」——那句话描述的是判据，不是模型做过的事', () => {
+    const text = silentTurnText(9, shape({ reasoningChars: 0 }))
+    expect(text).toContain('没有产出任何内容')
+    expect(text).not.toContain('0 字')
+  })
+
+  it('带工具调用时点出次数——2/34 的那一类要说得出自己与多数案例不同在哪', () => {
+    const text = silentTurnText(9, shape({ blocks: { reasoning: 1, text: 0, toolCalls: 2 } }))
+    expect(text).toContain('2 个工具调用')
+  })
+
+  it('点明用户此刻看到什么——这是补生成的全部理由', () => {
+    expect(silentTurnText(9, shape())).toContain('折叠的操作条')
+  })
+
+  it('带上两条禁令：不重做工具、不复述推理——少了它们，模型很可能把整轮再跑一遍', () => {
+    const text = silentTurnText(9, shape())
+    expect(text).toContain('不要重做已经执行过的工具调用')
+    expect(text).toContain('不要复述推理里的过程')
   })
 })

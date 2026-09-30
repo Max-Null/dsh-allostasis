@@ -22,6 +22,7 @@ import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import { SOURCE_KIND } from './name.ts'
 import type { RepetitionMetrics } from './repetition.ts'
+import type { TailShape } from './tail.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -84,4 +85,27 @@ export function degenerationText(
     + '重复不等于想得更细，它是原地打转：这些片段没有带来新信息。'
     + '现在检查手上已有的信息够不够完成任务——够就直接给结论，'
     + '不够就换一个与前面不同的动作去取，而不是把同一句话再写一遍。'
+}
+
+/**
+ * 组装空回合的补生成请求。
+ *
+ * 措辞对着**用户此刻的处境**写：他看到的是空白，所以先说清发生了什么，再给一条可执行的
+ * 出路。两条禁令是必要的——不点明「不要重做工具」，模型很可能把整轮动作再跑一遍，而这一轮
+ * 的产出已经不是用户缺的东西了。
+ * @param turn - 判定的回合号。
+ * @param shape - 该回合末条助手消息的产出形态。
+ * @returns 一条补生成请求的正文。
+ */
+export function silentTurnText(turn: number, shape: TailShape): string {
+  const produced = shape.reasoningChars > 0
+    ? `只生成了推理（${shape.reasoningChars} 字），没有文本`
+    : '没有产出任何内容'
+  const tools = shape.blocks.toolCalls > 0
+    ? `，另有 ${shape.blocks.toolCalls} 个工具调用`
+    : '，也没有工具调用'
+  return `⚠️ 空回合（应变）：turn ${turn} 的最后一步${produced}${tools}。`
+    + '用户此刻看到的是一串折叠的操作条，然后什么都没有——他不知道这一轮发生了什么。'
+    + '用一两句话补上：这一轮得出的结论、以及下一步需要他做什么。'
+    + '不要重做已经执行过的工具调用，也不要复述推理里的过程。'
 }
