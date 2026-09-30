@@ -1,10 +1,10 @@
 /**
- * 退化触发的会话事件——「插件当时判了什么」的落盘。
+ * 本插件的会话事件——「插件当时判了什么」的落盘。
  *
  * 判定输入本来就可重放（推理原文在日志的 `reasoning-chunks.texts`，占用与压缩点在
  * `data.usage` / `compaction/start`），所以「如果当时阈值是 X 会怎样」能离线回答。
  * 缺的是**插件实际用过的阈值与判定结果**：只靠重算，复盘的是「按现在的脚本判会怎样」，
- * 不是「插件当时判了什么」，两个口径会随时间漂移。这个事件补的就是这道缝
+ * 不是「插件当时判了什么」，两个口径会随时间漂移。事件补的就是这道缝
  * （设计方案 §4.3 选项 A）。
  *
  * `SessionEventMap` 是 merge-extensible 的，内核的会话 invariant 对未知事件类型直接
@@ -15,11 +15,14 @@
  */
 
 import type { RepetitionMetrics } from './repetition.ts'
+import type { TailShape } from './tail.ts'
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /** 一次退化触发；只记录判定，不记录干预——压缩动作是否发生由压缩事件自己回答。 */
     'allostasis/degeneration': DegenerationEvent
+    /** 一次空回合判定；只记录判定，补生成是否发生由 `steered` 自答。 */
+    'allostasis/silent-turn': SilentTurnEvent
   }
 }
 
@@ -83,5 +86,48 @@ export function degenerationEvent(trigger: DegenerationTrigger): DegenerationEve
         : `${entry.unit.slice(0, UNIT_SAMPLE_MAX_CHARS)}…`,
       count: entry.count,
     })),
+  }
+}
+
+/** {@link silentTurnEvent} 的输入。 */
+export interface SilentTurnTrigger {
+  /** 判定的回合号。 */
+  readonly turn: number
+  /** 该回合末条助手消息的产出形态。 */
+  readonly shape: TailShape
+  /** 本次是否已经 steer 了一次补生成。 */
+  readonly steered: boolean
+}
+
+/** `allostasis/silent-turn` 的 payload：一次空回合的判定依据。 */
+export interface SilentTurnEvent {
+  /** 判定的回合号。 */
+  turn: number
+  /** 末条助手消息的 step。 */
+  step: number
+  /** 末条消息的非空文本字符数；空回合恒为 0。 */
+  textChars: number
+  /** 末条消息的推理字符数——区分「想了很久没说」与「完全没输出」。 */
+  reasoningChars: number
+  /** 末条消息按类型的块计数。 */
+  blocks: { reasoning: number; text: number; toolCalls: number }
+  /** 本次是否 steer 了补生成；观测期恒 `false`。 */
+  steered: boolean
+}
+
+/**
+ * 把一次空回合判定整理成事件 payload。
+ * @param trigger - 判定依据。
+ * @returns 可直接交给 `session.append` 的 payload。
+ */
+export function silentTurnEvent(trigger: SilentTurnTrigger): SilentTurnEvent {
+  const { shape } = trigger
+  return {
+    turn: trigger.turn,
+    step: shape.step,
+    textChars: shape.textChars,
+    reasoningChars: shape.reasoningChars,
+    blocks: { ...shape.blocks },
+    steered: trigger.steered,
   }
 }

@@ -1,8 +1,8 @@
 /**
  * 插件的可配置面。
  *
- * 只暴露**判定阈值**这一类值：它们是「宁可晚一点也别误报」这条取舍的刻度，随任务类型
- * 与模型行为漂移，属于部署间会变的选择（DSH 插件规范 "No hardcoded tunables in
+ * 只暴露**判定阈值与档位**这一类值：它们是「宁可晚一点也别误报」这条取舍的刻度，随任务
+ * 类型与模型行为漂移，属于部署间会变的选择（DSH 插件规范 "No hardcoded tunables in
  * plugins"）。判据里的小样本门槛（`MIN_WORDS` / `MIN_UNITS` / `REPEAT_MIN_COUNT`）
  * 不在此列——它们不是偏好，改了就是把密度与比例算飞，属于判据几何的一部分。
  *
@@ -18,6 +18,7 @@
 import Schema from '@deepseek-ai/schemastery'
 import { DRIFT_THRESHOLD } from './drift.ts'
 import { CONSECUTIVE_STEPS, REPETITION_THRESHOLD } from './repetition.ts'
+import { SILENT_TURN_MODE, SILENT_TURN_MODES, type SilentTurnMode } from './tail.ts'
 
 /**
  * 插件配置，与同名 schemastery schema 一起由 Loader 校验。
@@ -31,6 +32,14 @@ export interface Config {
   repetitionThreshold?: number
   /** 连续多少步越线才触发退化提醒（默认 2）。取 1 会跟着正常期的单次抖动误报。 */
   consecutiveSteps?: number
+  /**
+   * 空回合兜底的档位（默认 `observe`）。
+   *
+   * `off` 连判定都不做；`observe` 判定并落 `allostasis/silent-turn` 事件；`steer` 额外
+   * 追加一次补生成。**`steer` 尚未实现**，取值会在解析时被接受但行为等同 `observe`，
+   * 直到补生成的边界（每回合一次、取消的回合不触发）落地。
+   */
+  silentTurn?: SilentTurnMode
 }
 
 /** {@link Config} 经校验后的形态：字段齐全，可直接参与判定。 */
@@ -41,6 +50,8 @@ export interface ResolvedConfig {
   readonly repetitionThreshold: number
   /** 见 {@link Config.consecutiveSteps}。 */
   readonly consecutiveSteps: number
+  /** 见 {@link Config.silentTurn}。 */
+  readonly silentTurn: SilentTurnMode
 }
 
 /** Loader 用于校验 `cordis.patch.yml` 里 `config` 段的 schema。 */
@@ -48,6 +59,7 @@ export const Config: Schema<Config> = Schema.object({
   driftThreshold: Schema.number(),
   repetitionThreshold: Schema.number(),
   consecutiveSteps: Schema.number(),
+  silentTurn: Schema.union(SILENT_TURN_MODES),
 })
 
 /**
@@ -59,6 +71,20 @@ export const Config: Schema<Config> = Schema.object({
 function ratio(field: string, value: number): number {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new Error(`dsh-allostasis: \`${field}\` must be a number between 0 and 1, got ${value}`)
+  }
+  return value
+}
+
+/**
+ * 校验一个枚举字段。
+ * @param field - 字段名，用于报错文案。
+ * @param value - 字段值。
+ * @param allowed - 允许的取值。
+ * @returns 校验通过的原值。
+ */
+function oneOf<T extends string>(field: string, value: T, allowed: readonly T[]): T {
+  if (!allowed.includes(value)) {
+    throw new Error(`dsh-allostasis: \`${field}\` must be one of ${allowed.join(' | ')}, got ${String(value)}`)
   }
   return value
 }
@@ -78,5 +104,6 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
   if (!Number.isInteger(consecutiveSteps) || consecutiveSteps < 1) {
     throw new Error(`dsh-allostasis: \`consecutiveSteps\` must be an integer >= 1, got ${consecutiveSteps}`)
   }
-  return { driftThreshold, repetitionThreshold, consecutiveSteps }
+  const silentTurn = oneOf('silentTurn', config.silentTurn ?? SILENT_TURN_MODE, SILENT_TURN_MODES)
+  return { driftThreshold, repetitionThreshold, consecutiveSteps, silentTurn }
 }

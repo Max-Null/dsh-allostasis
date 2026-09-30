@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { degenerationEvent, UNIT_SAMPLE_MAX_CHARS } from '../src/events.ts'
+import { degenerationEvent, silentTurnEvent, UNIT_SAMPLE_MAX_CHARS } from '../src/events.ts'
 import type { RepetitionMetrics } from '../src/repetition.ts'
+import type { TailShape } from '../src/tail.ts'
 
 /** 一份形状合法的最小量化结果；各用例只覆盖自己关心的字段。 */
 function metrics(over: Partial<RepetitionMetrics> = {}): RepetitionMetrics {
   return { units: 20, repeated: 12, ratio: 0.6, top: [{ unit: '好', count: 9 }], ...over }
+}
+
+/** 一份形状合法的最小末步形态；各用例只覆盖自己关心的字段。 */
+function shape(over: Partial<TailShape> = {}): TailShape {
+  return {
+    turn: 9,
+    step: 31,
+    textChars: 0,
+    reasoningChars: 3747,
+    blocks: { reasoning: 1, text: 0, toolCalls: 0 },
+    ...over,
+  }
 }
 
 describe('degenerationEvent', () => {
@@ -78,5 +91,40 @@ describe('degenerationEvent', () => {
       required: 2,
     })
     expect(event.top).toEqual([])
+  })
+})
+
+describe('silentTurnEvent', () => {
+  it('展平判定依据——推理长度与块计数都要在，否则复盘不出「想过但没说」与「完全没输出」的区别', () => {
+    expect(silentTurnEvent({ turn: 9, shape: shape(), steered: false })).toEqual({
+      turn: 9,
+      step: 31,
+      textChars: 0,
+      reasoningChars: 3747,
+      blocks: { reasoning: 1, text: 0, toolCalls: 0 },
+      steered: false,
+    })
+  })
+
+  it('以工具调用结尾的回合也记下工具次数——它决定这条事件属于哪一类异常', () => {
+    const event = silentTurnEvent({
+      turn: 9,
+      shape: shape({ blocks: { reasoning: 1, text: 0, toolCalls: 2 } }),
+      steered: false,
+    })
+    expect(event.blocks.toolCalls).toBe(2)
+    expect(event.textChars).toBe(0)
+  })
+
+  it('块计数是拷贝——事件落到日志后不该再随判定时的对象变化', () => {
+    const source = shape()
+    const event = silentTurnEvent({ turn: 9, shape: source, steered: false })
+    expect(event.blocks).not.toBe(source.blocks)
+    expect(event.blocks).toEqual(source.blocks)
+  })
+
+  it('steered 如实记录——事件只记判定，补生成是否发生由它自答', () => {
+    expect(silentTurnEvent({ turn: 9, shape: shape(), steered: true }).steered).toBe(true)
+    expect(silentTurnEvent({ turn: 9, shape: shape(), steered: false }).steered).toBe(false)
   })
 })

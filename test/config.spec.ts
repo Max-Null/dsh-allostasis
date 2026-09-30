@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveConfig } from '../src/config.ts'
+import { resolveConfig, type Config } from '../src/config.ts'
 import { DRIFT_THRESHOLD, measureThinking, verdict } from '../src/drift.ts'
 import {
   CONSECUTIVE_STEPS,
@@ -8,6 +8,7 @@ import {
   repetitionVerdict,
   trackLoop,
 } from '../src/repetition.ts'
+import { SILENT_TURN_MODE, SILENT_TURN_MODES } from '../src/tail.ts'
 
 describe('resolveConfig', () => {
   it('不传配置时全部取判据模块的常量——配置前后行为逐字一致', () => {
@@ -15,6 +16,7 @@ describe('resolveConfig', () => {
       driftThreshold: DRIFT_THRESHOLD,
       repetitionThreshold: REPETITION_THRESHOLD,
       consecutiveSteps: CONSECUTIVE_STEPS,
+      silentTurn: SILENT_TURN_MODE,
     })
   })
 
@@ -27,6 +29,7 @@ describe('resolveConfig', () => {
       driftThreshold: DRIFT_THRESHOLD,
       repetitionThreshold: 0.7,
       consecutiveSteps: CONSECUTIVE_STEPS,
+      silentTurn: SILENT_TURN_MODE,
     })
   })
 
@@ -57,6 +60,21 @@ describe('resolveConfig', () => {
 
   it('连续步数 1 合法——它意味着单步越线即提醒，误报由使用者自己承担', () => {
     expect(resolveConfig({ consecutiveSteps: 1 }).consecutiveSteps).toBe(1)
+  })
+
+  it('空回合档位默认 observe——判定与留痕先跑起来，补生成等数据说话', () => {
+    expect(resolveConfig().silentTurn).toBe('observe')
+  })
+
+  it.each([...SILENT_TURN_MODES])('空回合档位 %s 被接受', (value) => {
+    expect(resolveConfig({ silentTurn: value }).silentTurn).toBe(value)
+  })
+
+  it('未知档位报错中止，不静默回退——静默回退会让「我改了配置」与「按默认跑」同时成立', () => {
+    // 配置来自 YAML，运行时可以是任意字符串；断言在这里是模拟外部输入的必需手段。
+    const unknown = 'yes' as string
+    expect(() => resolveConfig({ silentTurn: unknown } as Config)).toThrow(/silentTurn/)
+    expect(() => resolveConfig({ silentTurn: unknown } as Config)).toThrow(/off \| observe \| steer/)
   })
 })
 
