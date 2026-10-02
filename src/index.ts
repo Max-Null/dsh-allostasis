@@ -5,7 +5,7 @@
  *
  * · **一期 · 中文锚定**（`agent/pre-step`）：判定为语言漂移（英文功能词密度越线）就追加
  *   一条中文锚定消息。
- * · **二期 · 退化提醒**（`agent/pre-step`）：判定为推理退化（重复率越线且连续若干步成立）
+ * · **二期 · 退化提醒**（`agent/pre-step`）：判定为推理退化（窗口内累计若干步重复率越线）
  *   就追加减速提醒。
  * · **空回合检测**（`agent/turn-stopping`）：回合收尾时末条助手消息没有非空文本即判定成立，
  *   `steer` 档位下追加一次补生成。
@@ -93,12 +93,12 @@ function driftMessage(
 /**
  * 组装二期的推理退化提醒。
  *
- * 追踪状态**每步都推进**，包括被节流挡住的那几步：计数描述的是退化本身持续了多久，
+ * 追踪状态**每步都推进**，包括被节流挡住的那几步：窗口描述的是退化本身分布在哪几步，
  * 与「这一步有没有说出口」无关。
  * @param session - 产出该思考的会话。
  * @param sample - 最近一条思考。
  * @param resolved - 已校验的配置。
- * @param trackers - 连续越线的追踪状态表。
+ * @param trackers - 越线窗口的追踪状态表。
  * @param throttles - 退化提醒的节流状态表。
  * @returns 应当追加的消息；本步不提醒时返回 `undefined`。
  */
@@ -111,7 +111,7 @@ function loopMessage(
 ): UserMessage | undefined {
   const metrics = measureRepetition(sample.text)
   const stepVerdict = repetitionVerdict(metrics, resolved.repetitionThreshold)
-  const tracked = trackLoop(trackers.get(session), sample.turn, stepVerdict, resolved.consecutiveSteps)
+  const tracked = trackLoop(trackers.get(session), stepVerdict, resolved.loopWindowSteps, resolved.loopWindowHits)
   trackers.set(session, tracked.state)
   if (!tracked.fire) return undefined
   const advanced = admitPerTurn(throttles.get(session), sample.turn)
@@ -194,7 +194,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   console.info(
     `[${name}] loaded · driftThreshold=${resolved.driftThreshold}`
     + ` repetitionThreshold=${resolved.repetitionThreshold}`
-    + ` consecutiveSteps=${resolved.consecutiveSteps}`
+    + ` loopWindow=${resolved.loopWindowHits}/${resolved.loopWindowSteps}`
     + ` silentTurn=${resolved.silentTurn}`,
   )
   /** 每个会话各一份状态；用 WeakMap 以免会话销毁后残留。 */

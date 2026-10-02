@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { resolveConfig, type Config } from '../src/config.ts'
 import { DRIFT_THRESHOLD, measureThinking, verdict } from '../src/drift.ts'
 import {
-  CONSECUTIVE_STEPS,
+  LOOP_WINDOW_HITS,
+  LOOP_WINDOW_STEPS,
   measureRepetition,
   REPETITION_THRESHOLD,
   repetitionVerdict,
@@ -15,7 +16,8 @@ describe('resolveConfig', () => {
     expect(resolveConfig()).toEqual({
       driftThreshold: DRIFT_THRESHOLD,
       repetitionThreshold: REPETITION_THRESHOLD,
-      consecutiveSteps: CONSECUTIVE_STEPS,
+      loopWindowSteps: LOOP_WINDOW_STEPS,
+      loopWindowHits: LOOP_WINDOW_HITS,
       silentTurn: SILENT_TURN_MODE,
     })
   })
@@ -28,7 +30,8 @@ describe('resolveConfig', () => {
     expect(resolveConfig({ repetitionThreshold: 0.7 })).toEqual({
       driftThreshold: DRIFT_THRESHOLD,
       repetitionThreshold: 0.7,
-      consecutiveSteps: CONSECUTIVE_STEPS,
+      loopWindowSteps: LOOP_WINDOW_STEPS,
+      loopWindowHits: LOOP_WINDOW_HITS,
       silentTurn: SILENT_TURN_MODE,
     })
   })
@@ -54,12 +57,21 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig({ driftThreshold: 5 })).toThrow(/between 0 and 1, got 5/)
   })
 
-  it.each([0, -1, 1.5, Number.NaN])('连续步数 %s 非法——它必须是 >= 1 的整数', (value) => {
-    expect(() => resolveConfig({ consecutiveSteps: value })).toThrow(/consecutiveSteps/)
+  it.each([0, -1, 1.5, Number.NaN])('观察窗口步数 %s 非法——它必须是 >= 1 的整数', (value) => {
+    expect(() => resolveConfig({ loopWindowSteps: value })).toThrow(/loopWindowSteps/)
   })
 
-  it('连续步数 1 合法——它意味着单步越线即提醒，误报由使用者自己承担', () => {
-    expect(resolveConfig({ consecutiveSteps: 1 }).consecutiveSteps).toBe(1)
+  it.each([0, -1, 1.5, Number.NaN])('窗口命中数 %s 非法——它必须是 >= 1 的整数', (value) => {
+    expect(() => resolveConfig({ loopWindowHits: value })).toThrow(/loopWindowHits/)
+  })
+
+  it('窗口步数 1 合法——它意味着单步越线即提醒，误报由使用者自己承担', () => {
+    expect(resolveConfig({ loopWindowSteps: 1, loopWindowHits: 1 }).loopWindowSteps).toBe(1)
+  })
+
+  it('命中数超过窗口步数时报错——那是一个永不成立的触发条件', () => {
+    // 静默夹取等于关掉退化提醒而不说。
+    expect(() => resolveConfig({ loopWindowSteps: 2, loopWindowHits: 3 })).toThrow(/can never fire/)
   })
 
   it('空回合档位默认 observe——判定与留痕先跑起来，补生成等数据说话', () => {
@@ -96,8 +108,8 @@ describe('配置到判定的接线', () => {
     expect(repetitionVerdict(metrics, 0.8)).toBe('normal')
   })
 
-  it('连续步数真的改变触发时机——第 1 步越线在 required=1 时就触发', () => {
-    expect(trackLoop(undefined, 7, 'loop', 1).fire).toBe(true)
-    expect(trackLoop(undefined, 7, 'loop', 2).fire).toBe(false)
+  it('窗口参数真的改变触发时机——窗口 1 命中 1 时首步即触发', () => {
+    expect(trackLoop(undefined, 'loop', 1, 1).fire).toBe(true)
+    expect(trackLoop(undefined, 'loop', 5, 2).fire).toBe(false)
   })
 })

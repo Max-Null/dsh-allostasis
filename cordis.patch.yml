@@ -2,7 +2,8 @@
 # `system-prompt` / `agents` / `token-meter` already live in the host (dsh-base);
 # this adds only the allostasis plugin, which registers its own reminders.
 #
-# `config` 可覆盖三个判定阈值：driftThreshold / repetitionThreshold / consecutiveSteps。
+# `config` 可覆盖四个判定阈值：driftThreshold / repetitionThreshold /
+# loopWindowSteps / loopWindowHits，以及空回合档位 silentTurn。
 # 字段都可省略，省略即用插件内的默认值——这里刻意不写具体值，免得默认值有两个来源。
 # 各字段的含义、取值范围与默认值见 README 的「配置」段。
 - insert:

@@ -81,7 +81,11 @@ export function degenerationText(
   const top = metrics.top.slice(0, TOP_UNITS_SHOWN)
     .map(entry => `「${entry.unit.length <= TOP_UNIT_MAX_CHARS ? entry.unit : `${entry.unit.slice(0, TOP_UNIT_MAX_CHARS)}…`}」×${entry.count}`)
     .join('、')
-  return `${head}${where}，最高频的是 ${top}。`
+  // `top` 只收出现 ≥ `REPEAT_MIN_COUNT` 次的片段，所以它为空**等价于**重复率为 0。
+  // `repetitionThreshold: 0` 是合法配置（阈值校验允许 0，等于「任何一步都提醒」），
+  // 那条路径下必须省略这一句，否则会拼出「最高频的是 。」这种残句。
+  const highlight = top === '' ? '' : `，最高频的是 ${top}`
+  return `${head}${where}${highlight}。`
     + '重复不等于想得更细，它是原地打转：这些片段没有带来新信息。'
     + '现在检查手上已有的信息够不够完成任务——够就直接给结论，'
     + '不够就换一个与前面不同的动作去取，而不是把同一句话再写一遍。'

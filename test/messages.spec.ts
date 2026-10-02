@@ -72,6 +72,16 @@ describe('degenerationText', () => {
     expect(text).toContain('「做」×32')
   })
 
+  it('没有达到次数的片段时不拼「最高频的是 。」——阈值 0 是合法配置，这条路径可达', () => {
+    // `top` 为空等价于重复率为 0（top 只收出现 ≥3 次的片段）。2026-10-02 在隔离实例上
+    // 把 repetitionThreshold 压到 0 做触发验证时，正文拼出了「最高频的是 。」这种残句。
+    const text = degenerationText(1, 1, metrics({ units: 16, repeated: 0, ratio: 0, top: [] }))
+    expect(text).not.toContain('最高频的是')
+    expect(text).toContain('16 个片段里有 0 个出现 3 次以上')
+    // 省掉一句之后正文仍要完整收尾，不能断在半截
+    expect(text.endsWith('而不是把同一句话再写一遍。')).toBe(true)
+  })
+
   it('最多列举三个——再多就成了把碎片复述一遍', () => {
     const text = degenerationText(1, 1, metrics({
       top: [

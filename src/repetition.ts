@@ -1,22 +1,29 @@
 /**
  * 思考重复度判定（退化检测的判据）。
  *
- * 判据 = 单条推理按换行与中英句读切分后，**出现 ≥3 次的单元占全部单元的比例**，
- * 并要求连续若干步越线才触发。
+ * 判据由两部分构成。
  *
- * 实测依据（2026-09-28，会话 `session-fabc21b2`，19 轮 416 条助手消息）：
- * 正常期重复率 0%–35%、退化期 48%–92%，隔离带很宽。阈值取 50% 落在这份单会话样本
- * 两端的中点附近，**不是标定结果**——它是第一期可用的起点，标定留给数据积累
- * （设计方案 §4.2 与 §五）。
+ * **单步度量**：按换行与中英句读切分推理，统计「出现 ≥3 次的单元」占比。只统计**实义
+ * 单元**——纯标记（代码围栏、花括号、星号）在写代码时天然高频，把它们计入会让正常步越线。
+ * 实测（2026-10-01，本机 `sessions-ssid` 根 37 个 ≥3MB 会话）：三个会话的越线全部来自这类
+ * 标记，排除后归零；而真退化会话的峰值反而更高——噪声单元出局后真实重复的占比更突出。
  *
- * 连续 N 步是必需的：正常期也会出现单次抖动（实测峰值 35%），只按单步触发会让误报
- * 跟着抖动走。代价是延迟——按同一份数据回放，触发会落在 t11/s2 而不是 t10/s44，
- * 晚约 3 步（中间夹了一个 48%，低于阈值、计数归零）。
+ * **触发条件**：最近若干步内**累计**越线次数，不要求连续。原判据要求连续 2 步，其依据是
+ * 单个会话（`fabc21b2`，本机最严重的样本）里退化在同一 turn 内连成片；换成散布型退化时
+ * 判据失效——`a8ac8e89` 有 17 次语义越线却凑不出一次连续 2 步，提醒因此几乎不被发出
+ * （该会话只触发 1 次、落在 t38；另有 `8fa3b15e` 与 `cb56f381` 两个真退化会话触发 0 次）。
+ * 窗口累计在同一批样本上让两个零触发的会话开始触发，而三个假阳性会话（语义口径下越线为
+ * 零）在任何窗口下都不触发。窗口**跨 turn** 累计：散布正是跨 turn 的，按 turn 清零会把
+ * 它们重新拆散。
  *
- * 为什么不用推理长度当辅助判据：退化期的单条推理并不特别长（实测 1,000–2,600
- * 字符），长度不区分两群；重复率本身已经把「这段内容有多少信息」量化了。
+ * `insufficient`（单元数不足）既不记命中也不记未命中：让「推理偶尔写得很短」占位会稀释
+ * 窗口、反复推迟触发。
  *
- * 设计出处：`docs/设计/2026-09-28-应变二期-退化检测与自动干预.md` §四
+ * 为什么不用推理长度当辅助判据：退化期的单条推理并不特别长（实测 1,000–2,600 字符），
+ * 长度不区分两群；重复率本身已经把「这段内容有多少信息」量化了。
+ *
+ * 设计出处：`docs/设计/2026-09-28-应变二期-退化检测与自动干预.md` §四、
+ * `docs/设计/2026-10-01-提醒判据修正与实测方案.md`
  * @module @max-null/dsh-allostasis/repetition
  */
 
@@ -29,15 +36,32 @@ export const MIN_UNITS = 12
 /** 重复率判定阈值——起点值，非标定值。 */
 export const REPETITION_THRESHOLD = 0.5
 
-/** 触发所需的连续越线步数。 */
-export const CONSECUTIVE_STEPS = 2
+/** 触发所需的观察窗口，以步为单位（默认 5）。 */
+export const LOOP_WINDOW_STEPS = 5
+
+/** 窗口内需要累计的越线步数（默认 2）。取 3 会漏掉「少而猛」型退化。 */
+export const LOOP_WINDOW_HITS = 2
 
 /** 切分单元用的分隔符：换行与中英句读。 */
 const UNIT_SEPARATOR = /[\n。！？]/
 
+/**
+ * 一个单元是否计入重复统计。
+ *
+ * 排除两类：以代码围栏开头的整段（` ``` ` 与 ` ```ts `），以及不含实义文字的纯标记单元。
+ * 实义 = 至少一个汉字，或至少两个连续拉丁字母——单个字母会让 `}`、`*`、`|` 这类符号的
+ * 邻接字母混进来。
+ * @param unit - 切分并去空白后的单元。
+ * @returns 该单元是否计入。
+ */
+function isSemanticUnit(unit: string): boolean {
+  if (unit.startsWith('```')) return false
+  return /[\p{Script=Han}]|[A-Za-z]{2}/u.test(unit)
+}
+
 /** 一条思考的重复度量化结果。 */
 export interface RepetitionMetrics {
-  /** 切分后的单元总数（去空白后）。 */
+  /** 计入统计的实义单元总数。 */
   units: number
   /** 重复单元的**总出现次数**（同一单元出现 5 次计 5，不是计 1）。 */
   repeated: number
@@ -53,15 +77,16 @@ export type RepetitionVerdict = 'loop' | 'normal' | 'insufficient'
 /**
  * 统计一条思考文本的重复度。空文本返回全零。
  *
- * 单元按 `UNIT_SEPARATOR` 切分并去掉空白，因此纯空行的段落不参与统计。
- * `top` 只收达到 `REPEAT_MIN_COUNT` 的单元，最多 5 条，同次数按单元字典序稳定排序。
+ * 单元按 `UNIT_SEPARATOR` 切分、去掉空白、滤掉非实义单元，因此纯空行的段落与代码标记
+ * 都不参与统计。`top` 只收达到 `REPEAT_MIN_COUNT` 的单元，最多 5 条，同次数按单元字典序
+ * 稳定排序。
  * @param text - 推理原文。
  * @returns 量化结果。
  */
 export function measureRepetition(text: string): RepetitionMetrics {
   const units = text.split(UNIT_SEPARATOR)
     .map(part => part.trim())
-    .filter(part => part !== '')
+    .filter(part => part !== '' && isSemanticUnit(part))
   const counts = new Map<string, number>()
   for (const unit of units) counts.set(unit, (counts.get(unit) ?? 0) + 1)
   let repeated = 0
@@ -83,8 +108,8 @@ export function measureRepetition(text: string): RepetitionMetrics {
 /**
  * 对一次测量下判定。
  *
- * 单元数不足 `MIN_UNITS` 时返回 `insufficient`——**不下结论**。调用方据此决定该步
- * 既不算越线也不算清白（见 `trackLoop`）。
+ * 单元数不足 `MIN_UNITS` 时返回 `insufficient`——**不下结论**。调用方据此决定该步既不算
+ * 越线也不算清白（见 `trackLoop`）。
  * @param metrics - 量化结果。
  * @param threshold - 重复率阈值；缺省用 {@link REPETITION_THRESHOLD}。
  * @returns 三态判定。
@@ -97,39 +122,35 @@ export function repetitionVerdict(
   return metrics.ratio >= threshold ? 'loop' : 'normal'
 }
 
-/** 连续越线的追踪状态。不可变——每次推进都返回一份新状态。 */
+/** 越线窗口的追踪状态。不可变——每次推进都返回一份新状态。 */
 export interface LoopTrackerState {
-  /** 当前已连续越线的步数。 */
-  consecutive: number
-  /** 最近一次判定的 turn，用于识别「换了一轮」。 */
-  lastTurn: number
+  /** 最近若干步的越线标记，最近的在后；长度不超过窗口步数。 */
+  readonly recent: readonly boolean[]
 }
 
 /**
- * 推进连续越线计数，并判定本次是否触发。
+ * 推进越线窗口，并判定本次是否触发。
  *
- * **状态不跨 turn 延续**：新一轮的第一条推理重新起算。turn 是用户可感知的边界，
- * 而且实测里退化在同一个 turn 内就已连成片（t10 的 44%–64% 全在一轮内），跨轮累加
- * 只会让触发更晚。
+ * 窗口**不按 turn 清零**：退化样本常常散布在若干轮里，按轮清零会把它们重新拆散——这正是
+ * 原「连续 2 步」判据在 `a8ac8e89` 上失效的原因。
  *
- * `insufficient` 的样本**保持计数不变**：它既不是越线也不是清白，算作清零会让
- * 「推理偶尔写得很短」反复推迟触发。
- *
+ * `insufficient` 的样本**既不记命中也不记未命中**：让它占位会稀释窗口。代价是窗口可能
+ * 跨过多个步才填满，但触发条件本身是「累计」而非「密度」，不受影响。
  * @param state - 上一次的状态；首次调用传 `undefined`。
- * @param turn - 产出该思考的 turn。
  * @param verdict - 该步的判定。
- * @param required - 触发所需的连续越线步数；缺省用 {@link CONSECUTIVE_STEPS}。
+ * @param windowSteps - 窗口大小，以步为单位；缺省用 {@link LOOP_WINDOW_STEPS}。
+ * @param windowHits - 触发所需的窗口内越线步数；缺省用 {@link LOOP_WINDOW_HITS}。
  * @returns `state` 为推进后的新状态；`fire` 为本次是否达到触发条件。
  */
 export function trackLoop(
   state: LoopTrackerState | undefined,
-  turn: number,
   verdict: RepetitionVerdict,
-  required: number = CONSECUTIVE_STEPS,
+  windowSteps: number = LOOP_WINDOW_STEPS,
+  windowHits: number = LOOP_WINDOW_HITS,
 ): { state: LoopTrackerState; fire: boolean } {
-  const current = state ?? { consecutive: 0, lastTurn: Number.NaN }
-  const base = current.lastTurn === turn ? current.consecutive : 0
-  if (verdict === 'insufficient') return { state: { consecutive: base, lastTurn: turn }, fire: false }
-  const consecutive = verdict === 'loop' ? base + 1 : 0
-  return { state: { consecutive, lastTurn: turn }, fire: consecutive >= required }
+  const current = state ?? { recent: [] }
+  if (verdict === 'insufficient') return { state: current, fire: false }
+  const recent = [...current.recent, verdict === 'loop'].slice(-windowSteps)
+  const hits = recent.filter(Boolean).length
+  return { state: { recent }, fire: hits >= windowHits }
 }

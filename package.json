@@ -1,6 +1,6 @@
 {
   "name": "@max-null/dsh-allostasis",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "应变（allostasis）：会话状态的自我调节。第一期：中文思考的漂移检测与近因锚定",
   "license": "MIT",
   "publishConfig": {
