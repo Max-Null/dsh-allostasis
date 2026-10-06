@@ -7,11 +7,12 @@
  * 在流上的命中面与全量判定不是一回事：一行在某一刻可以是完整的表项、之后被续写成长句。
  * 改阈值、改 `MIN_UNITS`、或改切分口径之后，都要能重新量一遍，而不是靠回忆上次的数字。
  *
- * **判据直接从 `src/repetition.ts` import**，不在本文件里重新实现 `measureRepetition` /
- * `repetitionVerdict`。但增量扫描器必须自己持有一份切分与过滤逻辑（`src` 没导出
- * `UNIT_SEPARATOR` 与 `isSemanticUnit`），所以每次运行都会跑一遍**探针自检**：把增量结果
- * 与 `src` 的原实现在同一段文本的每个 chunk 位置上逐个对四元组（units / repeated / ratio /
- * verdict）。不一致即退出 2 —— 口径漂移在工具这里就会被挡住，不会静默产出错数字。
+ * **判据与增量扫描器都直接从 `src/` import**（`src/repetition.ts` 的 `measureRepetition` /
+ * `repetitionVerdict`，`src/cut/detect.ts` 的 `createStreamDetector`），本文件里没有第二份
+ * 实现。跑之前仍有一次**前置自检**：把增量扫描器的读数与全文判定在几条探针文本的每个
+ * chunk 位置上对照四元组（units / repeated / ratio / verdict）。它过去是防「工具复刻切分
+ * 逻辑的漂移」，现在防的是另一件事——**增量与全量不等价**：一旦不等价，下面全库回放报出来
+ * 的数字就是另一套口径的。不一致即退出 2。
  *
  * 输出四块：
  *   ① 对照表 —— 各阈值在流上的干预率、真阳性率、召回、误掐
@@ -43,6 +44,9 @@ const SRC = join(HERE, '..', 'src')
 
 const { measureRepetition, repetitionVerdict, MIN_UNITS, REPEAT_MIN_COUNT } =
   await import(pathToFileURL(join(SRC, 'repetition.ts')).href)
+
+/** 流上的判据就是实现里那一个——工具不另有一份增量扫描器。 */
+const { createStreamDetector } = await import(pathToFileURL(join(SRC, 'cut', 'detect.ts')).href)
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
 
@@ -146,10 +150,11 @@ class StreamRepetition {
 }
 
 /**
- * 探针自检：逐 chunk 对照增量结果与 `src` 原实现。
+ * 前置自检：逐 chunk 对照增量扫描器与全文判定的四元组。
  *
- * 这是本工具唯一的正确性护栏——增量扫描器复刻了 `src` 未导出的切分与过滤逻辑，
- * `src` 一旦改动而这里没跟上，标定出的数字就是另一套口径的。
+ * 两者不等价的话，下面全库回放报出来的是另一套口径的数字——这条自检是数字可信度的前提，
+ * 不是可选装饰。探针覆盖四类形状：稳定重复、重复里夹正常句、代码围栏与实义单元混排、
+ * 未收尾的尾段（最后这一条正是 §九.2 点名的那个细节）。
  * @returns 不一致的位置数；0 表示口径一致。
  */
 function selfCheck() {
@@ -162,15 +167,16 @@ function selfCheck() {
   let bad = 0
   for (const text of probes) {
     for (const threshold of THRESHOLDS) {
-      const scanner = new StreamRepetition(threshold)
+      const scanner = createStreamDetector(threshold)
       let acc = ''
       for (const chunk of Array.from(text)) {
         acc += chunk
-        const stream = scanner.push(chunk)
+        const fired = scanner.push(chunk)
+        const reading = scanner.reading()
         const whole = measureRepetition(acc)
         const verdict = repetitionVerdict(whole, threshold)
-        if (stream.units !== whole.units || stream.repeated !== whole.repeated
-          || stream.ratio !== whole.ratio || stream.verdict !== verdict) bad += 1
+        if (reading.units !== whole.units || reading.repeated !== whole.repeated
+          || reading.ratio !== whole.ratio || fired !== (verdict === 'loop')) bad += 1
       }
     }
   }
@@ -179,7 +185,7 @@ function selfCheck() {
 
 const drift = selfCheck()
 if (drift !== 0) {
-  console.error(`探针自检不一致：${drift} 个位置。增量扫描器的切分口径与 src/repetition.ts 已漂移，先修它。`)
+  console.error(`前置自检不一致：${drift} 个位置。流上判定与全文判定已不等价（src/cut/detect.ts vs src/repetition.ts），先修它。`)
   process.exit(2)
 }
 
@@ -247,20 +253,21 @@ for (const [i, file] of files.entries()) {
     const hit = {}
     for (const threshold of THRESHOLDS) {
       const s = stat[threshold]
-      const scanner = new StreamRepetition(threshold)
+      const scanner = createStreamDetector(threshold)
       let firstLoop = null
       let loopChunks = 0
       let fellBack = false
       let chars = 0
       for (let k = 0; k < texts.length; k += 1) {
         chars += texts[k].length
-        const m = scanner.push(texts[k])
-        if (m.verdict === 'loop') {
+        const fired = scanner.push(texts[k])
+        const m = scanner.reading()
+        if (fired) {
           loopChunks += 1
           if (firstLoop === null) firstLoop = { chunk: k + 1, chars, units: m.units, repeated: m.repeated, ratio: m.ratio }
         } else if (firstLoop !== null) fellBack = true
       }
-      if (scanner.maxBuffered > s.bufferedPeak) s.bufferedPeak = scanner.maxBuffered
+      if (scanner.peakBuffer() > s.bufferedPeak) s.bufferedPeak = scanner.peakBuffer()
       if (firstLoop === null) { hit[threshold] = null; continue }
       const atEnd = totalChars - firstLoop.chars <= 0
       hit[threshold] = { ...firstLoop, atEnd, fellBack, loopChunks }

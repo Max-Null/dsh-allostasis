@@ -1,10 +1,12 @@
 /**
  * 插件的可配置面。
  *
- * 只暴露**判定阈值与档位**这一类值：它们是「宁可晚一点也别误报」这条取舍的刻度，随任务
- * 类型与模型行为漂移，属于部署间会变的选择（DSH 插件规范 "No hardcoded tunables in
- * plugins"）。判据里的小样本门槛（`MIN_WORDS` / `MIN_UNITS` / `REPEAT_MIN_COUNT`）与
- * 实义单元规则不在此列——它们不是偏好，改了就是把密度与比例算飞，属于判据几何的一部分。
+ * 只暴露**判定阈值、档位与一段可覆盖的文案**：前者是「宁可晚一点也别误报」这条取舍的刻度，
+ * 随任务类型与模型行为漂移，属于部署间会变的选择（DSH 插件规范 "No hardcoded tunables in
+ * plugins"）；文案（`streamCutResumeText`）则是给别人写的话——模型读到的措辞属于使用者
+ * 可以有的意见，不属于判据。判据里的小样本门槛（`MIN_WORDS` / `MIN_UNITS` /
+ * `REPEAT_MIN_COUNT`）与实义单元规则不在此列——它们不是偏好，改了就是把密度与比例算飞，
+ * 属于判据几何的一部分。
  *
  * **schema 只管形式，缺省与范围在 `resolveConfig`**：两处各管一半是有意的。schema 用
  * `.default()` 会让输出类型变成 `number | Volatile<number>`（默认值允许是动态函数），
@@ -16,6 +18,7 @@
  */
 
 import Schema from '@deepseek-ai/schemastery'
+import { STREAM_CUT_MODE, STREAM_CUT_MODES, type StreamCutMode } from './cut/stream.ts'
 import { DRIFT_THRESHOLD } from './drift.ts'
 import { LOOP_WINDOW_HITS, LOOP_WINDOW_STEPS, REPETITION_THRESHOLD } from './repetition.ts'
 import { SILENT_TURN_MODE, SILENT_TURN_MODES, type SilentTurnMode } from './tail.ts'
@@ -54,6 +57,25 @@ export interface Config {
    * （设计文档 §六.1），先让它只观测、由使用者显式打开。
    */
   silentTurn?: SilentTurnMode
+  /**
+   * 流内掐断的档位（默认 `observe`）。
+   *
+   * `off` 不注册 `llm/stream`，与没有这个能力时一致；`observe` 判定并打一行诊断、不掐断；
+   * `cut` 掐断并续跑一步（见 `cut/stream.ts`）。
+   *
+   * **默认不是 `cut`**：掐断会让该步的 `data.usage` 整键缺失、`message.source.replayState`
+   * 缺键，该轮的 token 汇总因此整体不可用（客户端不渲染它）。代价已知、可接受，但补不回来
+   * ——那两格由上游适配器在流末尾产出，掐断就是不产出——所以由使用者知情后自行开启。
+   */
+  streamCut?: StreamCutMode
+  /**
+   * 掐断后续跑请求的正文（默认由 `cut/messages.ts` 组装，含当次读数）。
+   *
+   * 配了就用配的：那是一段纯文本，没有占位符，因此覆盖之后读数不再出现在文案里
+   * （诊断行与轨迹页摘要不受影响）。空串会被拒绝——「配了但什么也没说」等于把续跑请求
+   * 变成一条空白消息。
+   */
+  streamCutResumeText?: string
 }
 
 /** {@link Config} 经校验后的形态：字段齐全，可直接参与判定。 */
@@ -68,6 +90,16 @@ export interface ResolvedConfig {
   readonly loopWindowHits: number
   /** 见 {@link Config.silentTurn}。 */
   readonly silentTurn: SilentTurnMode
+  /** 见 {@link Config.streamCut}。 */
+  readonly streamCut: StreamCutMode
+  /**
+   * 见 {@link Config.streamCutResumeText}。
+   *
+   * `undefined` 表示「用内置文案」——它不是空值，而是一份**要按当次读数组装**的正文
+   * （`cut/messages.ts` 的 `streamCutResumeText`），所以缺省只能留在这里、不能在解析时
+   * 折成一个静态字符串。
+   */
+  readonly streamCutResumeText: string | undefined
 }
 
 /** Loader 用于校验 `cordis.patch.yml` 里 `config` 段的 schema。 */
@@ -77,6 +109,8 @@ export const Config: Schema<Config> = Schema.object({
   loopWindowSteps: Schema.number(),
   loopWindowHits: Schema.number(),
   silentTurn: Schema.union(SILENT_TURN_MODES),
+  streamCut: Schema.union(STREAM_CUT_MODES),
+  streamCutResumeText: Schema.string(),
 })
 
 /**
@@ -120,6 +154,20 @@ function oneOf<T extends string>(field: string, value: T, allowed: readonly T[])
 }
 
 /**
+ * 校验一个可选文本字段。
+ * @param field - 字段名，用于报错文案。
+ * @param value - 字段值；未配置时是 `undefined`。
+ * @returns 校验通过的原值或 `undefined`。
+ */
+function optionalText(field: string, value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`dsh-allostasis: \`${field}\` must be a non-empty string, got ${JSON.stringify(value)}`)
+  }
+  return value
+}
+
+/**
  * 校验配置并补齐缺省值。
  *
  * 范围约束不交给 schema 的 `.min()/.max()`：那样报错只会说「number」，而说出该字段的
@@ -142,5 +190,15 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     )
   }
   const silentTurn = oneOf('silentTurn', config.silentTurn ?? SILENT_TURN_MODE, SILENT_TURN_MODES)
-  return { driftThreshold, repetitionThreshold, loopWindowSteps, loopWindowHits, silentTurn }
+  const streamCut = oneOf('streamCut', config.streamCut ?? STREAM_CUT_MODE, STREAM_CUT_MODES)
+  const streamCutResumeText = optionalText('streamCutResumeText', config.streamCutResumeText)
+  return {
+    driftThreshold,
+    repetitionThreshold,
+    loopWindowSteps,
+    loopWindowHits,
+    silentTurn,
+    streamCut,
+    streamCutResumeText,
+  }
 }

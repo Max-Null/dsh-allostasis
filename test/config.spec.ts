@@ -10,6 +10,7 @@ import {
   trackLoop,
 } from '../src/repetition.ts'
 import { SILENT_TURN_MODE, SILENT_TURN_MODES } from '../src/tail.ts'
+import { STREAM_CUT_MODE, STREAM_CUT_MODES } from '../src/cut/stream.ts'
 
 describe('resolveConfig', () => {
   it('不传配置时全部取判据模块的常量——配置前后行为逐字一致', () => {
@@ -19,6 +20,8 @@ describe('resolveConfig', () => {
       loopWindowSteps: LOOP_WINDOW_STEPS,
       loopWindowHits: LOOP_WINDOW_HITS,
       silentTurn: SILENT_TURN_MODE,
+      streamCut: STREAM_CUT_MODE,
+      streamCutResumeText: undefined,
     })
   })
 
@@ -33,6 +36,8 @@ describe('resolveConfig', () => {
       loopWindowSteps: LOOP_WINDOW_STEPS,
       loopWindowHits: LOOP_WINDOW_HITS,
       silentTurn: SILENT_TURN_MODE,
+      streamCut: STREAM_CUT_MODE,
+      streamCutResumeText: undefined,
     })
   })
 
@@ -87,6 +92,32 @@ describe('resolveConfig', () => {
     const unknown = 'yes' as string
     expect(() => resolveConfig({ silentTurn: unknown } as Config)).toThrow(/silentTurn/)
     expect(() => resolveConfig({ silentTurn: unknown } as Config)).toThrow(/off \| observe \| steer/)
+  })
+
+  it('流内掐断档位默认 observe——强动作由使用者知情后自行打开', () => {
+    // 理由不是「不知道下游会怎样」，而是已知的代价：掐断会让该步的 usage 与 replayState
+    // 两格缺失（`cut/stream.ts` 的档位注释）。
+    expect(resolveConfig().streamCut).toBe('observe')
+    expect(STREAM_CUT_MODE).toBe('observe')
+  })
+
+  it.each([...STREAM_CUT_MODES])('流内掐断档位 %s 被接受', (value) => {
+    expect(resolveConfig({ streamCut: value }).streamCut).toBe(value)
+  })
+
+  it('未知的流内掐断档位报错中止，不静默回退', () => {
+    const unknown = 'observe-only' as string
+    expect(() => resolveConfig({ streamCut: unknown } as Config)).toThrow(/streamCut/)
+    expect(() => resolveConfig({ streamCut: unknown } as Config)).toThrow(/off \| observe \| cut/)
+  })
+
+  it('续跑文案未配置时是 undefined——它意味着「按当次读数组装」而不是一个空值', () => {
+    expect(resolveConfig().streamCutResumeText).toBeUndefined()
+    expect(resolveConfig({ streamCutResumeText: '直接给结论。' }).streamCutResumeText).toBe('直接给结论。')
+  })
+
+  it.each(['', '   '])('续跑文案是空串（%j）时报错——那是「配了但什么也没说」', (value) => {
+    expect(() => resolveConfig({ streamCutResumeText: value })).toThrow(/streamCutResumeText/)
   })
 })
 

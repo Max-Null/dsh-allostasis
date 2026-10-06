@@ -1,14 +1,18 @@
 /**
  * 应变（allostasis）：会话状态的自我调节。
  *
- * 三个能力落在两个挂载点上：
+ * 四个能力落在三个挂载点上：
  *
  * · **一期 · 中文锚定**（`agent/pre-step`）：判定为语言漂移（英文功能词密度越线）就追加
  *   一条中文锚定消息。
  * · **二期 · 退化提醒**（`agent/pre-step`）：判定为推理退化（窗口内累计若干步重复率越线）
  *   就追加减速提醒。
+ * · **三期 · 流内掐断**（`llm/stream`）：在同一步的生成过程中逐增量判重复率，命中就把这次
+ *   生成伪装成正常收尾（补 `block-end` + `finish{stop}`），再由回合收尾边界 steer 续跑一步。
+ *   掐断是**能中断模型生成**的强动作，档位与代价见 `cut/stream.ts` 与设计文档 §六 / §九.3。
  * · **空回合检测**（`agent/turn-stopping`）：回合收尾时末条助手消息没有非空文本即判定成立，
- *   `steer` 档位下追加一次补生成。
+ *   `steer` 档位下追加一次补生成。**它带一条例外**：本 turn 被本插件掐断过就跳过判定与补
+ *   生成——那一步的静默是掐断造成的，不是模型自己没说话（§3.4 的内部协调）。
  *
  * **判定结果不写会话日志**。会话日志的事件词汇表 `KNOWN_SESSION_EVENT_TYPES` 由内核在构建期
  * 生成，下游插件的事件类型不在其中；`Session.append()` 的封装
@@ -52,6 +56,9 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import { anchorText } from './anchor.ts'
 import { Config, resolveConfig, type ResolvedConfig } from './config.ts'
+import { streamCutNotice } from './cut/messages.ts'
+import { cutBeforeStopping, recordCut, type CutLedger } from './cut/state.ts'
+import { installStreamCut } from './cut/stream.ts'
 import { measureThinking, verdict } from './drift.ts'
 import { degenerationText, pluginNotice, silentTurnText } from './messages.ts'
 import { name } from './name.ts'
@@ -124,7 +131,7 @@ function loopMessage(
 }
 
 /**
- * 注册回合收尾监听：检出空回合；`steer` 档位下追加一次补生成。
+ * 注册回合收尾监听：检出空回合；`steer` 档位下追加一次补生成；掐断造成的静默改走续跑。
  *
  * **为什么整段包 try/catch**：内核的契约测试写明该事件里抛出的异常会让 turn 以 error
  * 结束（`packages/core/agent-loop/tests/contract-regressions.spec.ts:357`，loop 本身
@@ -136,25 +143,61 @@ function loopMessage(
  * 前者由 `signal.aborted` 判、后者由会话头的 `parentSession` 判，两条先例见
  * `@changfenhuang/dsh-genui` 的 `fenceFeedback`。
  *
+ * **掐断造成的静默走另一条分支**（设计文档 §3.4）：掐断之后的那个 step 只剩 reasoning，
+ * 恰好满足空回合判据，若不区分就会与掐断的续跑撞成两条提醒。所以本函数第一个查的就是
+ * `cut/state.ts` 的账本——命中即跳过判定与补生成（**留痕照旧**），并在这里把续跑请求送进去
+ * （§3.3 的重定向）。两条边界与既有逻辑刻意不同：
+ *
+ * · 它**不看 `silentTurn` 档位**：续跑是掐断的必要配套动作，不是空回合兜底的一部分，
+ *   关掉空回合兜底不该把掐断变成「白掐」。
+ * · 它**不排除子代理**：掐断已经在流里发生了（`llm/stream` 拿不到会话对象，无从预判），
+ *   续跑是补救——不续跑等于让子代理那一步静默收场，父回复拿到一段空白。
+ *   （这是判断，不是实测：`docs/排查/2026-10-07-补块落盘形状.md` §5.4 把「allostasis
+ *   自己实现的掐断」整条列为未验证面。）
+ *
  * **补生成的记账发生在发送之前**：`turn-stopping` 是可能重入的边界，先记账才能保证同一次
- * 补生成不会被投两遍——与 `fenceFeedback` 同一条约束。
+ * 补生成不会被投两遍——与 `fenceFeedback` 同一条约束。掐断的续跑同理：`cutBeforeStopping`
+ * 先把 `pending` 清零，第二次查账就只剩「跳过」而没有「续跑」。
  *
  * **补生成单独包一层 catch**：判定已经成立，补生成失败不该升级成回合失败。
  * @param ctx - 插件上下文。
  * @param resolved - 已校验的配置。
  * @param steers - 补生成的节流状态表，按会话各一份。
+ * @param cutLedgers - 掐断账本，按会话 id 各一份（键的形式见 `cut/state.ts`）。
  */
 function installSilentTurn(
   ctx: Context,
   resolved: ResolvedConfig,
   steers: WeakMap<object, PerTurnThrottleState>,
+  cutLedgers: Map<string, CutLedger>,
 ): void {
   ctx.on('agent/turn-stopping', ({ agent, turn, signal }): void => {
     try {
-      if (resolved.silentTurn === 'off') return
       if (signal.aborted) return
-      if (agent.session.header.parentSession !== undefined) return
       const { session } = agent
+      const key = String(session.id)
+      const cut = cutBeforeStopping(cutLedgers.get(key), turn)
+      if (cut.skip) {
+        cutLedgers.set(key, cut.ledger)
+        const record = cut.ledger.last
+        if (!cut.resume) {
+          console.debug(`[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定（本 turn 的续跑已经发过）`)
+          return
+        }
+        console.debug(
+          `[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定 · 续跑一步`
+          + (record === undefined ? '' : ` · 本会话累计 ${cut.ledger.total} 次`),
+        )
+        if (record === undefined) return
+        try {
+          agent.steer(streamCutNotice(turn, record, resolved.streamCutResumeText))
+        } catch (error: unknown) {
+          ctx.logger?.warn?.(`${name}: stream-cut steer failed (${error instanceof Error ? error.message : String(error)})`)
+        }
+        return
+      }
+      if (resolved.silentTurn === 'off') return
+      if (session.header.parentSession !== undefined) return
       const shape = measureTail(tailSamples(session.snapshotEvents()), turn)
       if (shape === undefined || tailVerdict(shape) !== 'silent') return
       const plan = resolved.silentTurn === 'steer' ? admitPerTurn(steers.get(session), turn) : undefined
@@ -195,13 +238,31 @@ export function apply(ctx: Context, config: Config = {}): void {
     `[${name}] loaded · driftThreshold=${resolved.driftThreshold}`
     + ` repetitionThreshold=${resolved.repetitionThreshold}`
     + ` loopWindow=${resolved.loopWindowHits}/${resolved.loopWindowSteps}`
-    + ` silentTurn=${resolved.silentTurn}`,
+    + ` silentTurn=${resolved.silentTurn}`
+    + ` streamCut=${resolved.streamCut}`,
   )
   /** 每个会话各一份状态；用 WeakMap 以免会话销毁后残留。 */
   const anchorThrottles = new WeakMap<object, PerTurnThrottleState>()
   const loopThrottles = new WeakMap<object, PerTurnThrottleState>()
   const loopTrackers = new WeakMap<object, LoopTrackerState>()
   const silentSteers = new WeakMap<object, PerTurnThrottleState>()
+  /**
+   * 掐断账本。
+   *
+   * 用 `Map<string, …>` 而不是 WeakMap：流侧只能拿到 `options.sessionId`，拿不到会话对象
+   * （`cut/state.ts` 有说明）。每会话的条目是三个数字加一份现场读数，量级可忽略。
+   */
+  const cutLedgers = new Map<string, CutLedger>()
+
+  if (resolved.streamCut !== 'off') {
+    installStreamCut(ctx, {
+      mode: resolved.streamCut,
+      threshold: resolved.repetitionThreshold,
+      onCut: (sessionId, record): void => {
+        cutLedgers.set(sessionId, recordCut(cutLedgers.get(sessionId), record))
+      },
+    })
+  }
 
   ctx.on('agent/pre-step', async ({ agent, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
@@ -242,5 +303,5 @@ export function apply(ctx: Context, config: Config = {}): void {
     return { ...decision, messages: [...decision.messages, ...appended] }
   }, { prepend: true })
 
-  installSilentTurn(ctx, resolved, silentSteers)
+  installSilentTurn(ctx, resolved, silentSteers, cutLedgers)
 }

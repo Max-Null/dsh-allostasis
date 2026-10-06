@@ -42,8 +42,15 @@ export const LOOP_WINDOW_STEPS = 5
 /** 窗口内需要累计的越线步数（默认 2）。取 3 会漏掉「少而猛」型退化。 */
 export const LOOP_WINDOW_HITS = 2
 
-/** 切分单元用的分隔符：换行与中英句读。 */
-const UNIT_SEPARATOR = /[\n。！？]/
+/**
+ * 切分单元用的分隔符：换行与中英句读。
+ *
+ * **导出给流内判据与标定工具用**：三期的 `src/cut/detect.ts` 与
+ * `tools/audit-stream-firing.mjs` 都必须按同一份切分口径增量扫描，复刻一份即漂移面
+ * （工具过去正是靠运行期探针自检兜这个漂移）。这个正则**不带 `g` 标志**，因此没有
+ * `lastIndex` 状态，可以在多处共享。
+ */
+export const UNIT_SEPARATOR = /[\n。！？]/
 
 /**
  * 一个单元是否计入重复统计。
@@ -51,10 +58,13 @@ const UNIT_SEPARATOR = /[\n。！？]/
  * 排除两类：以代码围栏开头的整段（` ``` ` 与 ` ```ts `），以及不含实义文字的纯标记单元。
  * 实义 = 至少一个汉字，或至少两个连续拉丁字母——单个字母会让 `}`、`*`、`|` 这类符号的
  * 邻接字母混进来。
+ *
+ * 与 {@link UNIT_SEPARATOR} 同样导出，理由见上——它也是切分口径的一部分：少这一步，
+ * 「单元数」就不是同一个量。
  * @param unit - 切分并去空白后的单元。
  * @returns 该单元是否计入。
  */
-function isSemanticUnit(unit: string): boolean {
+export function isSemanticUnit(unit: string): boolean {
   if (unit.startsWith('```')) return false
   return /[\p{Script=Han}]|[A-Za-z]{2}/u.test(unit)
 }
