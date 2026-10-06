@@ -1,6 +1,6 @@
 # @max-null/dsh-allostasis
 
-本插件属于 **`@max-null/*` 插件系列**——这一系列共同构成 **[SSID（思灵 · Seek Soul in Darkness）](https://github.com/Max-Null/seek-soul-in-darkness)** 桌面体验。SSID 是整合它们的盒：`dsh-allostasis` · `dsh-capture` · `dsh-chat-rail` · `dsh-chinese-thinking` · `dsh-draft-polish` · `dsh-guardian` · `dsh-habit` · `dsh-memory` · `dsh-node-appearance` · `dsh-plugin-center` · `dsh-quick-toolbar` · `dsh-skill-mcp-center` · `dsh-ssid-panels` · `dsh-ssid-zh-ui` · `dsh-achievements`。
+本插件属于 **`@max-null/*` 插件系列**——这一系列共同构成 **[SSID（思灵 · Seek Soul in Darkness）](https://github.com/Max-Null/seek-soul-in-darkness)** 桌面体验。SSID 是整合它们的盒，已发布在 npm 上的同系列包有：`dsh-allostasis` · `dsh-achievements` · `dsh-capture` · `dsh-chat-rail` · `dsh-chinese-thinking` · `dsh-draft-polish` · `dsh-guardian` · `dsh-habit` · `dsh-memory` · `dsh-node-appearance` · `dsh-plugin-center` · `dsh-quick-toolbar` · `dsh-skill-mcp-center` · `dsh-skills` · `dsh-tone-layer`（另有几个随 SSiD 一起分发的内置插件不在 npm 上）。
 
 This plugin belongs to the **`@max-null/*` family** — a set of plugins that together form the **[SSID (思灵 · Seek Soul in Darkness)](https://github.com/Max-Null/seek-soul-in-darkness)** desktop experience.
 
@@ -9,9 +9,8 @@ Before each step it reads the most recent reasoning block and appends one near-e
 when that thinking has drifted into English (**Chinese anchoring**) or collapsed into
 repetition (**degeneration reminder**). During generation it measures the same repetition
 chunk by chunk and can **cut the step short** mid-stream, then steer one resume step
-(**stream cut**). When a turn ends with no visible output at all (**silent turn**) — and it
-was not this plugin itself that cut it — the browser half folds that verdict from the event
-stream and shows a notice beneath the turn.
+(**stream cut**). When a turn ends with no visible output at all (**silent turn**), the
+browser half folds that verdict from the event stream and shows a notice beneath the turn.
 
 ## 它做什么
 
@@ -22,7 +21,7 @@ stream and shows a notice beneath the turn.
 | **中文锚定** | **已实现** | 上一步思考的英文功能词密度越线 |
 | **推理退化提醒** | **已实现** | 上一步思考的重复率越线，且窗口内累计 N 步成立 |
 | **流内掐断** | **已实现** | 生成过程中重复率越线，且命中行之后思考仍在继续（`streamCut`，**默认只观察**） |
-| **空回合提示** | **已实现** | 回合收尾时末条助手消息没有非空文本（只在 `completed` 回合上判；被本插件掐断过的那一轮除外） |
+| **空回合提示** | **已实现** | 回合收尾时末条助手消息没有非空文本（只在 `completed` 回合上判） |
 | 上下文占用感知 | 计划中 | 需先定「什么情况下才出现」（持续在场会退化成背景音） |
 | 压缩预约落盘 | 计划中 | 待通路验证：退化样本散布在整段退化区间，「只压一小段」能否打断循环尚无证据（二期方案 §八.1） |
 
@@ -41,7 +40,7 @@ stream and shows a notice beneath the turn.
 
 **判定结果不写会话日志。** 内核的事件词汇表在构建期生成，下游插件的自定义类型不在其中，而 `Session.append()` 没有 `ignorable` 标记通道；无标记的自定义事件会让**整份**日志在下次加载时被拒读。判定输入本来就可重放，留痕由 `console.debug` 诊断行与界面上那行提示承担。理由与取证见 `docs/设计/2026-09-30-空回合检测与可见化.md` §十一。掐断同样走这条路——它改的是流，不是日志。
 
-**除空回合外全程静默，所以「确认它在工作」只能靠日志。** 前几种命中时只在轨迹页留一行（流内掐断那次则直接终止一次生成）；不命中时一个字都不说——「装了没有」「阈值生效没有」「这一步为什么没提醒」三个问题原本都无从回答，只能靠改配置去试。因此它在 `src/index.ts` 的 `apply` 里留三行痕：
+**除空回合外全程静默，所以「确认它在工作」只能靠日志。** 前几种命中时只在轨迹页留一行（流内掐断那次则直接终止一次生成）；不命中时一个字都不说——「装了没有」「阈值生效没有」「这一步为什么没提醒」三个问题原本都无从回答，只能靠改配置去试。因此它在 `src/index.ts` 与 `src/cut/stream.ts` 里留四类痕：
 
 ```
 [dsh-allostasis] loaded · driftThreshold=0.15 repetitionThreshold=0.5 loopWindow=2/5
@@ -50,9 +49,10 @@ stream and shows a notice beneath the turn.
                  · repetition=normal units=29 ratio=0%
 [dsh-allostasis] 流内掐断 · session=… · 命中于 3989 字（第 2090 个增量）· units=200 repeated=100 ratio=50%
 [dsh-allostasis] 流内掐断 · turn 27 · 跳过空回合判定 · 续跑一步 · 本 turn 第 2/3 次 · 本会话累计 2 次
+[dsh-allostasis] 空回合 · turn 31 step 3 · reasoning 1204 字 blocks=reasoning×1 text×0 tool×0 steered=false
 ```
 
-第一行 `info`、每个进程一次，报的是**生效配置**（`Config` 的解析结果，不是代码里的缺省常量）。第二行 `debug`、**每一步判定一行**：两类判据的三态结论加度量。第三行 `debug`、**只在流内判据命中时出现**（`observe` 档会写「流内命中（observe，不掐断）」）。默认静默，排查时打开即可——不必为了看一眼判定结果去动阈值。其中 `units` 是切分后**计入统计的实义单元数**（滤掉代码围栏与纯符号，见「判据」段），**低于 12 判 `insufficient`**（样本不足不下结论），此时 `ratio` 仍会给出，只是不参与判定。
+第一类 `info`、每个进程一次，报的是**生效配置**（`Config` 的解析结果，不是代码里的缺省常量）。第二类 `debug`、**每一步判定一行**：两类判据的三态结论加度量。第三类 `debug`、**只在流内判据命中时出现**——掐断写「流内掐断」，`observe` 档写「流内命中（observe，不掐断）」，命中后探到收尾则写「流内命中后放行」。第四类 `debug`、**只在回合收尾时出现**，两种形状：掐断造成的静默写「跳过空回合判定 · 续跑一步」（配额用完时不写续跑、改写上限，`streamCutMaxResumes: 0` 写作「本 turn 续跑上限为 0（只掐不续）」，同一 turn 重入写「本 turn 的续跑已经发过」）；真正走空回合判定的那一路写「空回合 · …」。默认静默，排查时打开即可——不必为了看一眼判定结果去动阈值。其中 `units` 是切分后**计入统计的实义单元数**（滤掉代码围栏与纯符号，见「判据」段），**低于 12 判 `insufficient`**（样本不足不下结论），此时 `ratio` 仍会给出，只是不参与判定。
 
 判据来源、实测数据与完整设计见 `docs/设计/2026-09-20-应变-设计方案.md`、
 `docs/设计/2026-09-28-应变二期-退化检测与自动干预.md`、
@@ -76,11 +76,11 @@ stream and shows a notice beneath the turn.
 
 另外两个看起来更直观的指标被否掉：**中文字符占比**（中文思考本来就大量夹英文标识符，实测中文期只有 0.19–0.37，区分度不足）；**最长连续英文游程**（中文思考引用一段代码就会把它顶高，它测的是「引用了多长的代码」而非「用什么语言思考」）。
 
-阈值由 `tools/analyze-thinking-lang.mjs` 在一份真实会话上标定，该工具随包发布。
+阈值由 `tools/analyze-thinking-lang.mjs` 在一份真实会话上标定（该工具在插件仓库的 `tools/` 下；整份 `tools/` 不随 npm 包发布，原因见「流内判据」段）。
 
 ### 推理退化
 
-**重复率** = 单条推理按换行与中英句读切分、滤掉非实义单元后，**出现 ≥3 次的单元占全部单元的比例**；**单元数 ≥ 12 才判定**，**最近 5 步内累计 ≥2 步越线才触发**（窗口跨 turn，不要求连续）。
+**重复率** = 单条推理按换行与中文句读（`UNIT_SEPARATOR = /[\n。！？]/`）切分、滤掉非实义单元后，**出现 ≥3 次的单元占全部单元的比例**；**单元数 ≥ 12 才判定**，**最近 5 步内累计 ≥2 步越线才触发**（窗口跨 turn，不要求连续）。
 
 **非实义单元 = 以代码围栏开头的整段，以及不含「至少一个汉字或两个连续拉丁字母」的单元。** 排除它们是因为纯标记在写代码时天然高频：跨会话实测里三个会话的越线全部来自 ` ``` `、`}`、`*`，排除后归零；而真退化会话的峰值反而更高（`64e08c94` 51%→94%、`a8ac8e89` 53%→90%）——噪声单元出局后真实重复的占比更突出。
 
@@ -107,9 +107,11 @@ stream and shows a notice beneath the turn.
 - **未收尾的尾段每次用临时值参与判定，但不写回状态**——原实现每次调用都能看到它，写回会让
   同一行被后续增量重复计入。
 
-切分口径（`UNIT_SEPARATOR` / `isSemanticUnit`）由 `src/repetition.ts` 导出，流内判据与标定
-工具 `tools/audit-stream-firing.mjs` 共用同一份——工具里没有第二份实现，它对每条文本的每个
-增量位置与全文判定比四元组（`units` / `repeated` / `ratio` / 判定），不一致就拒绝出报告。
+切分口径（`UNIT_SEPARATOR` / `isSemanticUnit`）由 `src/repetition.ts` 导出。流内判据直接 import
+它，标定工具 `tools/audit-stream-firing.mjs` 的**运行路径**也是——工具从 `src/` 取
+`measureRepetition` / `repetitionVerdict` / `createStreamDetector`，报出来的数字与实际生效的
+判据同源。工具另有一段前置自检：对几条探针文本的每个增量位置与全文判定比四元组
+（`units` / `repeated` / `ratio` / 判定），不一致就拒绝出报告（退出码 2）。
 
 **为什么主判据是统计口径而不是复读白名单。** 机制形状吸收了第三方插件
 [`dsh-repeat-guard`](https://www.npmjs.com/package/dsh-repeat-guard)（MIT）——包 `llm/stream`、
@@ -117,7 +119,12 @@ stream and shows a notice beneath the turn.
 消息）里，白名单判据真阳性率只有 **7.82%**（9,228 次掐断里 8,506 次误掐）、漏掉 184 条真退化；
 同一批数据上统计口径 ratio ≥ 0.5 的真阳性率是 **93.49%**、召回 **906/906**。完整数据、长度分桶
 与未验证面见 `docs/排查/2026-10-07-统计判据在流上的误报面.md`，复现用
-`node tools/audit-stream-firing.mjs`。
+`node tools/audit-stream-firing.mjs`（**在插件仓库里**运行）。
+
+**`tools/` 不随 npm 包发布**：四个工具只在插件仓库里可用。`audit-stream-firing.mjs` 与
+`audit-loop-detection.mjs` 从 `../src` import `.ts`（不走 `dist/`），在 npm 包里必然
+`ERR_MODULE_NOT_FOUND`；`analyze-thinking-lang.mjs` 与 `audit-chunk-limits.mjs` 不依赖 `src/`，
+一并停发以保持一致。
 
 **命中之后要再探一格**：下一格仍是思考增量才掐，换成正文、工具调用或流已结束就放行——命中行
 本来就是那段思考的最后一句时，掐它是误伤。掐断的三件事缺一不可：补 `block-end`（带该块的完整
@@ -126,13 +133,13 @@ stream and shows a notice beneath the turn.
 
 ## 截图
 
-空回合提示：浏览器半边从会话事件流自行折叠出「这一轮没有产出内容」，对话页在该回合尾部显示一行说明。它贴着那一段空白，回看历史时也还在原处。
+空回合提示：浏览器半边从会话事件流自行折叠出「这一轮结束时模型没有产出内容」，对话页在该回合尾部显示两行——标题下面再给一句说明，按末步是只生成了推理、还是什么也没产出，分别给一句可执行的下一步（前者提示接着说完，后者提示重问一次）。它贴着那一段空白，回看历史时也还在原处。
 
 | 空回合提示 |
 |---|
 | ![空回合提示](docs/shots/silent-turn-1.png) |
 
-其余能力（中文锚定、推理退化提醒、流内掐断）都是**行为类**：不新增按钮、面板或设置项，判定越线时要么向请求末尾追加一条提醒，要么终止这一次生成并让它换一步重来——效果体现在模型行为上。这三项按《SSiD 开发手册》§9 走无 UI 插件豁免，只有空回合提示有界面元素。
+其余能力（中文锚定、推理退化提醒、流内掐断）都是**行为类**：不新增按钮、面板或设置项，判定越线时要么向请求末尾追加一条提醒，要么终止这一次生成并让它换一步重来——效果体现在模型行为上，因此没有独立截图。本插件唯一的界面元素是空回合提示。
 
 **流内掐断的行为效果**（无界面，这里用文字说明）：`streamCut: cut` 时，退化步在生成中途被截断——
 该步的思考停在命中点，紧接着一条续跑请求把机器推回轨道。从使用者的角度看到的是：那一步的输出
@@ -153,7 +160,7 @@ stream and shows a notice beneath the turn.
   name: '@max-null/dsh-allostasis'
 ```
 
-Requires `agents` and `system-prompt` in the host composition (dsh-base ships both).
+Requires `agents` in the host composition (dsh-base ships it).
 Installs as a bundle: `dsh plugin --profile <name> add @max-null/dsh-allostasis`.
 
 `streamCut` 另需宿主的 `llm` 服务——`llm/stream` 由它派发。缺它时不报错，只是监听永远收不到事件（档位形同 `off`）。
@@ -195,7 +202,9 @@ reasoning `signature`）。判据本身的标定数据是支持开 `cut` 的：�
 
 **`streamCut` 与 `silentTurn` 是两件事**。掐断之后的那个 step 只剩推理，恰好满足空回合判据；本插件
 自己知道「这一步是我终止的」，因此跳过空回合判定与补生成、改发续跑——**这条跳过不看 `silentTurn` 档位**，
-关掉空回合兜底不该让掐断变成白掐。
+关掉空回合兜底不该让掐断变成白掐。**跳过的只是宿主侧那一份判定**（它靠 `cut/state.ts` 的账本记账）；
+对话页那行提示由浏览器半边独立折叠，读不到这个账本——**那一轮显不显示提示只看末条助手消息有没有文本**：
+续跑成功时新的一步产出了文本，所以不显示；而超限或 `streamCutMaxResumes: 0`（不再续跑）时**仍会显示**。
 
 **档位管不到对话页那行提示**：提示由浏览器半边折叠会话事件流得出，与宿主判据同源但独立于档位——浏览器半边的 `apply` 拿不到插件配置（2026-10-01 实测：在 `cordis.patch.yml` 里配 `silentTurn: off`，宿主读到 `off`，浏览器半边收到空对象）。要完全静默请禁用插件。
 
@@ -210,7 +219,7 @@ reasoning `signature`）。判据本身的标定数据是支持开 `cut` 的：�
 
 判据里的**小样本门槛**（`MIN_WORDS` / `MIN_UNITS` / `REPEAT_MIN_COUNT`）不是配置项——它们不是偏好，改了就是把密度与比例算飞。值域外的取值会让插件**报错中止**而不是静默回退：静默回退会让「我明明改了配置」与「插件按默认值跑」同时成立而无从察觉。
 
-这几个阈值里，**`repetitionThreshold` 已经在三期标定过**（485 个会话 / 31,055 条含思考消息的全库回放，见上面「流内判据」）；其余仍是**起点值而非标定结果**——单会话样本给出的隔离带中段，标定留给数据积累（设计方案 §5.1 的三条路：显性配置项、数据积累、LLM 自调）。
+这几个阈值里，**`repetitionThreshold` 已经在三期标定过**（485 个会话 / 31,055 条含思考消息的全库回放，见上面「流内判据」）；其余仍是**起点值而非标定结果**——单会话样本给出的隔离带中段，标定留给数据积累（二期方案 §5.1 的三条路：显性配置项、数据积累、LLM 自调）。
 
 ## Develop
 

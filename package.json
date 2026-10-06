@@ -1,7 +1,7 @@
 {
   "name": "@max-null/dsh-allostasis",
-  "version": "0.3.0",
-  "description": "应变（allostasis）：会话状态的自我调节。第一期：中文思考的漂移检测与近因锚定",
+  "version": "0.4.0",
+  "description": "应变（allostasis）：会话状态的自我调节——语言漂移的检测与锚定、推理退化的检测与提醒、空回合兜底，以及生成中的复读掐断",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -19,7 +19,6 @@
   "files": [
     "dist",
     "cordis.patch.yml",
-    "tools",
     "docs/shots"
   ],
   "dsh": {
