@@ -59,6 +59,21 @@ export const STREAM_CUT_MODES: readonly StreamCutMode[] = ['off', 'observe', 'cu
  */
 export const STREAM_CUT_MODE: StreamCutMode = 'observe'
 
+/**
+ * 同一个 turn 里允许的续跑次数上限缺省值。
+ *
+ * **它补的是一个实测暴露的缺口**（设计文档 §九.7）：dev 实测里同一个 turn 连掐四次，靠
+ * **模型自己在第五步让步**收敛——那是模型的行为，不是机制的保证。`silentTurn` 有
+ * `MAX_PER_TURN` 节流（`throttle.ts`），掐断原本没有。
+ *
+ * **为什么是 3**：四次才收敛属于边界情形，而模型在第二、三次干预时就已在思考里明说
+ * 「被截断」「我必须立刻产出正文」。若三次打断都没让它回到正轨，问题通常不在「被打断」，
+ * 而在那个会话的上下文本身已经病态——继续续跑只是拿 token 换一个不会到来的收敛。
+ *
+ * 超限之后**掐断照旧发生**（它本身已经省下 token，是收益），停的只是续跑这个动作。
+ */
+export const STREAM_CUT_MAX_RESUMES = 3
+
 /** 续跑文案里最多列举几个高频单元。 */
 const TOP_UNITS = 5
 

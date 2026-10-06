@@ -159,6 +159,10 @@ function loopMessage(
  * 补生成不会被投两遍——与 `fenceFeedback` 同一条约束。掐断的续跑同理：`cutBeforeStopping`
  * 先把 `pending` 清零，第二次查账就只剩「跳过」而没有「续跑」。
  *
+ * **续跑有每 turn 上限**（`streamCutMaxResumes`，§九.7）：没有它，一次不收敛的退化会在同一个
+ * turn 里无限重发续跑——dev 实测那个 turn 连掐四次才收敛，靠的是模型自己让步，那是模型的行为、
+ * 不是机制的保证。超限之后**掐断照旧发生**（它本身已经省下 token，是收益），停的只是续跑。
+ *
  * **补生成单独包一层 catch**：判定已经成立，补生成失败不该升级成回合失败。
  * @param ctx - 插件上下文。
  * @param resolved - 已校验的配置。
@@ -176,16 +180,26 @@ function installSilentTurn(
       if (signal.aborted) return
       const { session } = agent
       const key = String(session.id)
-      const cut = cutBeforeStopping(cutLedgers.get(key), turn)
+      const cut = cutBeforeStopping(cutLedgers.get(key), turn, resolved.streamCutMaxResumes)
       if (cut.skip) {
         cutLedgers.set(key, cut.ledger)
         const record = cut.ledger.last
+        if (cut.exhausted) {
+          // 掐断本身是收益（它省下了 token），停的只是续跑；配额用完的判定理由见 §九.7。
+          // 上限 0 是「只掐不续」这个设置本身、不是运行时耗尽，文案分开写——排查时不必回头查配置。
+          const cap = resolved.streamCutMaxResumes === 0
+            ? '本 turn 续跑上限为 0（只掐不续）'
+            : `本 turn 续跑已达上限（${resolved.streamCutMaxResumes} 次）`
+          console.debug(`[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定 · ${cap}，不再续跑`)
+          return
+        }
         if (!cut.resume) {
           console.debug(`[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定（本 turn 的续跑已经发过）`)
           return
         }
         console.debug(
           `[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定 · 续跑一步`
+          + ` · 本 turn 第 ${cut.ledger.resumes}/${resolved.streamCutMaxResumes} 次`
           + (record === undefined ? '' : ` · 本会话累计 ${cut.ledger.total} 次`),
         )
         if (record === undefined) return
@@ -239,7 +253,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     + ` repetitionThreshold=${resolved.repetitionThreshold}`
     + ` loopWindow=${resolved.loopWindowHits}/${resolved.loopWindowSteps}`
     + ` silentTurn=${resolved.silentTurn}`
-    + ` streamCut=${resolved.streamCut}`,
+    + ` streamCut=${resolved.streamCut}`
+    + ` streamCutMaxResumes=${resolved.streamCutMaxResumes}`,
   )
   /** 每个会话各一份状态；用 WeakMap 以免会话销毁后残留。 */
   const anchorThrottles = new WeakMap<object, PerTurnThrottleState>()

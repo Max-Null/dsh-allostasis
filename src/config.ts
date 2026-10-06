@@ -18,7 +18,7 @@
  */
 
 import Schema from '@deepseek-ai/schemastery'
-import { STREAM_CUT_MODE, STREAM_CUT_MODES, type StreamCutMode } from './cut/stream.ts'
+import { STREAM_CUT_MAX_RESUMES, STREAM_CUT_MODE, STREAM_CUT_MODES, type StreamCutMode } from './cut/stream.ts'
 import { DRIFT_THRESHOLD } from './drift.ts'
 import { LOOP_WINDOW_HITS, LOOP_WINDOW_STEPS, REPETITION_THRESHOLD } from './repetition.ts'
 import { SILENT_TURN_MODE, SILENT_TURN_MODES, type SilentTurnMode } from './tail.ts'
@@ -76,6 +76,28 @@ export interface Config {
    * 变成一条空白消息。
    */
   streamCutResumeText?: string
+  /**
+   * 同一个 turn 里最多续跑几次（默认 3）。
+   *
+   * **为什么需要上限**（设计文档 §九.7）：掐断本身是收益（它省下了 token），但续跑是动作，
+   * 没有上限时一次不收敛的退化会在同一个 turn 里一直重发——dev 实测那个 turn 连掐四次才
+   * 收敛，靠的是模型自己让步，那是模型的行为、不是机制的保证。
+   *
+   * **为什么是 3**：四次才收敛属于边界情形，而模型在第二、三次干预时就已在思考里明说
+   * 「被截断」「我必须立刻产出正文」。若三次打断都没让它回到正轨，问题通常不在「被打断」，
+   * 而在那个会话的上下文本身已经病态——继续续跑只是拿 token 换一个不会到来的收敛。
+   *
+   * 超限之后**掐断照旧发生**，停的只是续跑。
+   *
+   * **取 0 是一个有意义的档位：只掐不续。** 每一次掐断都走超限分支——掐断照旧发生、
+   * 空回合判定照旧跳过（那一步的静默仍然是我们造成的），只是不再往模型上下文里注入续跑
+   * 消息。它比 `cut` 保守：steer 本身是往上下文里加一条消息，那是一种污染，而只掐不续
+   * 只省 token、不改动对话内容；它比 `observe` 有用：observe 完全不掐。现有的三档
+   * （`off` / `observe` / `cut`）里没有这个中间语义，所以它由这个数表达。
+   *
+   * 取值范围 ≥ 0 的整数——**这条约束与窗口参数不同**，见 `times`。
+   */
+  streamCutMaxResumes?: number
 }
 
 /** {@link Config} 经校验后的形态：字段齐全，可直接参与判定。 */
@@ -100,6 +122,8 @@ export interface ResolvedConfig {
    * 折成一个静态字符串。
    */
   readonly streamCutResumeText: string | undefined
+  /** 见 {@link Config.streamCutMaxResumes}。 */
+  readonly streamCutMaxResumes: number
 }
 
 /** Loader 用于校验 `cordis.patch.yml` 里 `config` 段的 schema。 */
@@ -111,6 +135,7 @@ export const Config: Schema<Config> = Schema.object({
   silentTurn: Schema.union(SILENT_TURN_MODES),
   streamCut: Schema.union(STREAM_CUT_MODES),
   streamCutResumeText: Schema.string(),
+  streamCutMaxResumes: Schema.number(),
 })
 
 /**
@@ -135,6 +160,25 @@ function ratio(field: string, value: number): number {
 function steps(field: string, value: number): number {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`dsh-allostasis: \`${field}\` must be an integer >= 1, got ${value}`)
+  }
+  return value
+}
+
+/**
+ * 校验一个非负整数次数字段。
+ *
+ * **与 {@link steps} 分开而不是把它的下界放宽到 0**：`loopWindowSteps` / `loopWindowHits`
+ * 的取值必须 ≥ 1——窗口装不下一步、或窗口里装不下所需的命中数，都是**永不成立**的触发
+ * 条件，静默接受等于关掉退化提醒而不说。而续跑次数 0 成立：它是一个真实的设置（只掐不续，
+ * 见 {@link Config.streamCutMaxResumes}），不是同一个字段的越界值。两者共用一个校验函数
+ * 时，改一个字段的取值范围会连带改另一个。
+ * @param field - 字段名，用于报错文案。
+ * @param value - 字段值。
+ * @returns 校验通过的原值。
+ */
+function times(field: string, value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`dsh-allostasis: \`${field}\` must be an integer >= 0, got ${value}`)
   }
   return value
 }
@@ -192,6 +236,8 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
   const silentTurn = oneOf('silentTurn', config.silentTurn ?? SILENT_TURN_MODE, SILENT_TURN_MODES)
   const streamCut = oneOf('streamCut', config.streamCut ?? STREAM_CUT_MODE, STREAM_CUT_MODES)
   const streamCutResumeText = optionalText('streamCutResumeText', config.streamCutResumeText)
+  // 0 合法：它表达「只掐不续」（见 `Config.streamCutMaxResumes`），不是越界值。
+  const streamCutMaxResumes = times('streamCutMaxResumes', config.streamCutMaxResumes ?? STREAM_CUT_MAX_RESUMES)
   return {
     driftThreshold,
     repetitionThreshold,
@@ -200,5 +246,6 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     silentTurn,
     streamCut,
     streamCutResumeText,
+    streamCutMaxResumes,
   }
 }

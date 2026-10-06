@@ -10,7 +10,7 @@ import {
   trackLoop,
 } from '../src/repetition.ts'
 import { SILENT_TURN_MODE, SILENT_TURN_MODES } from '../src/tail.ts'
-import { STREAM_CUT_MODE, STREAM_CUT_MODES } from '../src/cut/stream.ts'
+import { STREAM_CUT_MAX_RESUMES, STREAM_CUT_MODE, STREAM_CUT_MODES } from '../src/cut/stream.ts'
 
 describe('resolveConfig', () => {
   it('不传配置时全部取判据模块的常量——配置前后行为逐字一致', () => {
@@ -22,6 +22,7 @@ describe('resolveConfig', () => {
       silentTurn: SILENT_TURN_MODE,
       streamCut: STREAM_CUT_MODE,
       streamCutResumeText: undefined,
+      streamCutMaxResumes: STREAM_CUT_MAX_RESUMES,
     })
   })
 
@@ -38,6 +39,7 @@ describe('resolveConfig', () => {
       silentTurn: SILENT_TURN_MODE,
       streamCut: STREAM_CUT_MODE,
       streamCutResumeText: undefined,
+      streamCutMaxResumes: STREAM_CUT_MAX_RESUMES,
     })
   })
 
@@ -118,6 +120,39 @@ describe('resolveConfig', () => {
 
   it.each(['', '   '])('续跑文案是空串（%j）时报错——那是「配了但什么也没说」', (value) => {
     expect(() => resolveConfig({ streamCutResumeText: value })).toThrow(/streamCutResumeText/)
+  })
+
+  it('每 turn 的续跑上限默认 3——四次才收敛是边界情形，不是目标（§九.7）', () => {
+    expect(resolveConfig().streamCutMaxResumes).toBe(STREAM_CUT_MAX_RESUMES)
+    expect(STREAM_CUT_MAX_RESUMES).toBe(3)
+  })
+
+  it.each([0, 1, 2, 5, 10])('续跑上限 %i 可配', (value) => {
+    expect(resolveConfig({ streamCutMaxResumes: value }).streamCutMaxResumes).toBe(value)
+  })
+
+  it('上限 0 合法——它表达「只掐不续」这个中间语义', () => {
+    // 现有三档里没有它：`observe` 完全不掐、`cut` 是掐 + 续。0 只省 token、不改动对话内容
+    // （steer 是往模型上下文里加一条消息，那是一种污染）。
+    expect(resolveConfig({ streamCutMaxResumes: 0 }).streamCutMaxResumes).toBe(0)
+  })
+
+  it.each([-1, -3, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    '续跑上限 %s 非法——它必须是 >= 0 的整数',
+    (value) => {
+      expect(() => resolveConfig({ streamCutMaxResumes: value })).toThrow(/streamCutMaxResumes/)
+    },
+  )
+
+  it('上限的报错文本点名字段与取值，且说的是 >= 0 这条界', () => {
+    expect(() => resolveConfig({ streamCutMaxResumes: -1 })).toThrow(/must be an integer >= 0, got -1/)
+  })
+
+  it('放宽上限的下界没有连带影响窗口参数——两者各有各的校验', () => {
+    // `steps` 与 `times` 分开的理由：窗口装不下一步是永不成立的触发条件，必须拒；
+    // 而续跑次数 0 是一个真实的设置。
+    expect(() => resolveConfig({ loopWindowSteps: 0, loopWindowHits: 0 })).toThrow(/loopWindowSteps/)
+    expect(() => resolveConfig({ loopWindowHits: 0 })).toThrow(/loopWindowHits/)
   })
 })
 

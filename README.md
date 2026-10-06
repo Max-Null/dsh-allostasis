@@ -45,10 +45,11 @@ stream and shows a notice beneath the turn.
 
 ```
 [dsh-allostasis] loaded · driftThreshold=0.15 repetitionThreshold=0.5 loopWindow=2/5
-                 silentTurn=observe streamCut=observe
+                 silentTurn=observe streamCut=observe streamCutMaxResumes=3
 [dsh-allostasis] turn 8 step 11 · drift=chinese funcDensity=0.6% chars=1764
                  · repetition=normal units=29 ratio=0%
 [dsh-allostasis] 流内掐断 · session=… · 命中于 3989 字（第 2090 个增量）· units=200 repeated=100 ratio=50%
+[dsh-allostasis] 流内掐断 · turn 27 · 跳过空回合判定 · 续跑一步 · 本 turn 第 2/3 次 · 本会话累计 2 次
 ```
 
 第一行 `info`、每个进程一次，报的是**生效配置**（`Config` 的解析结果，不是代码里的缺省常量）。第二行 `debug`、**每一步判定一行**：两类判据的三态结论加度量。第三行 `debug`、**只在流内判据命中时出现**（`observe` 档会写「流内命中（observe，不掐断）」）。默认静默，排查时打开即可——不必为了看一眼判定结果去动阈值。其中 `units` 是切分后**计入统计的实义单元数**（滤掉代码围栏与纯符号，见「判据」段），**低于 12 判 `insufficient`**（样本不足不下结论），此时 `ratio` 仍会给出，只是不参与判定。
@@ -135,7 +136,9 @@ stream and shows a notice beneath the turn.
 
 **流内掐断的行为效果**（无界面，这里用文字说明）：`streamCut: cut` 时，退化步在生成中途被截断——
 该步的思考停在命中点，紧接着一条续跑请求把机器推回轨道。从使用者的角度看到的是：那一步的输出
-明显变短了，然后模型直接给结论、或者换了个动作，而不是继续把同一句话写二十遍。
+明显变短了，然后模型直接给结论、或者换了个动作，而不是继续把同一句话写二十遍。**同一个回合里最多
+续跑 3 次**（`streamCutMaxResumes`）：三次打断都没让它回到正轨时，插件不再推它，那一步就停在被截断
+的地方——继续推只是拿 token 换一个不会到来的收敛。
 
 **一处用户可见的副作用**：被掐断的那一步没有 `usage` 字段，**该轮的 token 摘要因此不显示**
 （客户端只在拿得到精确回合汇总时才渲染它）。这一格由上游适配器在流末尾产出，掐断就是不产出，
@@ -157,7 +160,7 @@ Installs as a bundle: `dsh plugin --profile <name> add @max-null/dsh-allostasis`
 
 ## Config
 
-四个判定阈值加两个档位、一段文案可在 `config` 段覆盖；省略即用括号内的默认值。
+四个判定阈值、两个档位、一段文案与一个次数上限可在 `config` 段覆盖；省略即用括号内的默认值。
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
@@ -168,11 +171,27 @@ Installs as a bundle: `dsh plugin --profile <name> add @max-null/dsh-allostasis`
 | `silentTurn` | `observe` | 空回合档位：`off` 宿主不判定也不干预、`observe` 判定并打一行诊断、`steer` 额外补一次生成 |
 | `streamCut` | `observe` | 流内档位：`off` 不挂 `llm/stream`、`observe` 判定并打一行诊断（**不掐断**）、`cut` 掐断并续跑一步 |
 | `streamCutResumeText` | 内置文案 | 掐断后续跑请求的正文；配了就用配的（纯文本，覆盖后当次读数不再出现在文案里） |
+| `streamCutMaxResumes` | `3` | **同一个 turn** 里最多续跑几次；超限后掐断照旧发生，停的只是续跑。取 ≥ 0 的整数，**`0` = 只掐不续** |
 
 **为什么 `streamCut` 缺省不是 `cut`**：掐断会让该步的 `data.usage` 整键缺失、`message.source.replayState`
 缺键，该轮的 token 汇总整体不可用（客户端不渲染它，用户可见）。这个代价可接受但**不可完全抹平**——
 那两格由上游适配器在流末尾产出，掐断就是不产出，而伪造它们比缺失更糟（`replayState` 里含不可重算的
 reasoning `signature`）。判据本身的标定数据是支持开 `cut` 的：干预率 3.11%、真阳性率 93.49%、召回 906/906。
+
+**续跑有每 turn 上限**（`streamCutMaxResumes`，默认 3）。dev 实测里同一个 turn 连掐四次才收敛，靠的是
+**模型自己在第五步让步**——那是模型的行为，不是机制的保证；没有上限时，一次不收敛的退化会一直重发续跑。
+3 这个数的依据：四次才收敛属于边界情形，而模型在第二、三次干预时就已在思考里明说「被截断」「我必须立刻
+产出正文」；若三次打断都没让它回到正轨，问题通常不在「被打断」，而在那个会话的上下文本身已经病态。
+
+**超限之后掐断照旧发生**——它本身已经省下 token，是收益；要停的是「续跑」这个动作。超限那一刻的静默仍然
+是本插件造成的，所以仍然跳过空回合判定（不退回补一次生成），只是不再 steer。诊断行会写明是哪一种：
+`续跑已达上限（3 次），不再续跑` / `本 turn 的续跑已经发过`（重入）。
+
+**取 0 是一个有意义的设置：只掐不续。** 每一次掐断都走超限分支——掐断照旧发生、空回合判定照旧跳过，
+只是不再往模型上下文里注入续跑消息。它补的是现有三档之间的空档：`observe` 完全不掐，`cut` 是掐 + 续，
+而 **steer 本身会往上下文里加一条消息，那是一种污染**——只掐不续只省 token、不改动对话内容，比 `cut`
+保守、比 `observe` 有用。诊断行在这种配置下写作 `本 turn 续跑上限为 0（只掐不续）`，与运行时把配额
+用尽的那种（`续跑已达上限（N 次）`）分开说。
 
 **`streamCut` 与 `silentTurn` 是两件事**。掐断之后的那个 step 只剩推理，恰好满足空回合判据；本插件
 自己知道「这一步是我终止的」，因此跳过空回合判定与补生成、改发续跑——**这条跳过不看 `silentTurn` 档位**，
@@ -186,6 +205,7 @@ reasoning `signature`）。判据本身的标定数据是支持开 `cut` 的：�
   config:
     repetitionThreshold: 0.6
     streamCut: cut
+    streamCutMaxResumes: 2
 ```
 
 判据里的**小样本门槛**（`MIN_WORDS` / `MIN_UNITS` / `REPEAT_MIN_COUNT`）不是配置项——它们不是偏好，改了就是把密度与比例算飞。值域外的取值会让插件**报错中止**而不是静默回退：静默回退会让「我明明改了配置」与「插件按默认值跑」同时成立而无从察觉。
