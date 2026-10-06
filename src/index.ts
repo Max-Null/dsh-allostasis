@@ -206,24 +206,38 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.on('agent/pre-step', async ({ agent, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
-    const sample = latestThinking(agent.session)
-    if (sample === undefined) return decision
-    // 诊断行与下面的判定各算一次度量：两者都是纯字符串统计，重复计算的代价远低于
-    // 让 metrics 在三个函数之间穿梭带来的耦合。
-    const dMetrics = measureThinking(sample.text)
-    const rMetrics = measureRepetition(sample.text)
-    console.debug(
-      `[${name}] turn ${sample.turn} step ${sample.step}`
-      + ` · drift=${verdict(dMetrics, resolved.driftThreshold)}`
-      + ` funcDensity=${(dMetrics.funcDensity * 100).toFixed(1)}% chars=${dMetrics.chars}`
-      + ` · repetition=${repetitionVerdict(rMetrics, resolved.repetitionThreshold)}`
-      + ` units=${rMetrics.units} ratio=${(rMetrics.ratio * 100).toFixed(0)}%`,
-    )
+    // 判定与组装整段包在 try 里，理由与 `installSilentTurn` 同源：内核的契约测试写明
+    // `agent/pre-step` 里抛出的异常会让 turn 以 error 结束，而在 pre-step 上那个结束发生在
+    // **这一步进入模型之前**。异常源若留在会话里（例如此刻取不出思考文本），下一个 turn 会在
+    // 同一步以同一个异常结束——一次判据故障于是成了整场会话的终点（2026-10-06 实测）。
     const appended: UserMessage[] = []
-    const drift = driftMessage(agent.session, sample, resolved, anchorThrottles)
-    if (drift !== undefined) appended.push(drift)
-    const loop = loopMessage(agent.session, sample, resolved, loopTrackers, loopThrottles)
-    if (loop !== undefined) appended.push(loop)
+    try {
+      const sample = latestThinking(agent.session)
+      if (sample === undefined) return decision
+      // 诊断行与下面的判定各算一次度量：两者都是纯字符串统计，重复计算的代价远低于
+      // 让 metrics 在三个函数之间穿梭带来的耦合。
+      const dMetrics = measureThinking(sample.text)
+      const rMetrics = measureRepetition(sample.text)
+      console.debug(
+        `[${name}] turn ${sample.turn} step ${sample.step}`
+        + ` · drift=${verdict(dMetrics, resolved.driftThreshold)}`
+        + ` funcDensity=${(dMetrics.funcDensity * 100).toFixed(1)}% chars=${dMetrics.chars}`
+        + ` · repetition=${repetitionVerdict(rMetrics, resolved.repetitionThreshold)}`
+        + ` units=${rMetrics.units} ratio=${(rMetrics.ratio * 100).toFixed(0)}%`,
+      )
+      const drift = driftMessage(agent.session, sample, resolved, anchorThrottles)
+      if (drift !== undefined) appended.push(drift)
+      const loop = loopMessage(agent.session, sample, resolved, loopTrackers, loopThrottles)
+      if (loop !== undefined) appended.push(loop)
+    } catch (error: unknown) {
+      // 取数失败时窗口状态尚未推进（`trackLoop` 的写入在判定之后），这一步因此等价于
+      // `insufficient`：既不算命中也不算未命中，与「样本太短」同一处理。
+      // 记 `warn` 而不是 `debug`：它意味着判据本身坏了，与「这一步判成了什么」不是一类。
+      ctx.logger?.warn?.(
+        `${name}: pre-step check failed (${error instanceof Error ? error.message : String(error)}); 这一步不判定`,
+      )
+      return decision
+    }
     if (appended.length === 0) return decision
     return { ...decision, messages: [...decision.messages, ...appended] }
   }, { prepend: true })
