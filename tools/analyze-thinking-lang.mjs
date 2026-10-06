@@ -86,7 +86,9 @@ for (const line of readFileSync(file, 'utf8').split('\n')) {
   const d = ev.data || {}
   const texts = []
   for (const rec of Array.isArray(d.stream) ? d.stream : []) {
-    if (rec && rec.type === 'reasoning-chunks' && Array.isArray(rec.texts)) texts.push(...rec.texts)
+    if (!rec || rec.type !== 'reasoning-chunks' || !Array.isArray(rec.texts)) continue
+    // 逐元素拼接：texts 的元素数等于该步输出 token 数，展开调用会超引擎实参上限（见 src/thinking.ts）。
+    for (const delta of rec.texts) texts.push(delta)
   }
   steps.push({ turn: d.turn, step: d.step, ...metrics(texts.join('')) })
 }
