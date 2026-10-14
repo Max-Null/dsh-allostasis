@@ -92,6 +92,10 @@ browser half folds that verdict from the event stream and shows a notice beneath
 
 **三期改了这条边界的形状**（推理，未实测）：流内判据看的是**单步之内**的重复率，没有窗口这回事——上面那个 97% 的崩溃步在流上同样会越线，命中点按标定数据在全文 1% 处，后面还留着 99% 的复读，因此 `streamCut: cut` 档下它会被掐断。步骤边界那条窗口判据本身没有改动。
 
+**提醒的疗效（两份独立样本，2026-10）**：**落点在越线上的提醒，89%–91% 在紧接着一步就回落**（样本一 11 条中 91%、样本二 45 条中 89%）；窗口的收益在前 2 步内吃完，再拉长不再增长——**当场打断成立，持久性不成立**（同一 turn 至多一次提醒，复发不会被第二次提醒）。
+
+样本按落点分层是必要的：`trackLoop` 的窗口累计会让提醒落在**已经回落**的步上（那些样本本来就没有下降空间），混在一起读会把疗效从 ~90% 稀释到 67%–70%。指标也要一次报两个——「窗口内出现过 <50%」在 5 步窗口下能到 **98%**，因为它量的是「回落过」而不是「恢复」，且随窗口单调上升。复现 `node tools/audit-reminder-effect.mjs <会话日志>`，完整数据与判据取法见 `docs/设计/2026-09-29-压缩干预-重新设计.md` §四。
+
 退化触发的留痕是 `console.debug` 诊断行（`repetition=` 那一段给出 `units` 与 `ratio`）加上轨迹页那行提醒。**判定结果不落会话日志**——理由与空回合那条同源，见前文。
 
 ### 流内判据（三期）
@@ -121,10 +125,10 @@ browser half folds that verdict from the event stream and shows a notice beneath
 与未验证面见 `docs/排查/2026-10-07-统计判据在流上的误报面.md`，复现用
 `node tools/audit-stream-firing.mjs`（**在插件仓库里**运行）。
 
-**`tools/` 不随 npm 包发布**：四个工具只在插件仓库里可用。`audit-stream-firing.mjs` 与
-`audit-loop-detection.mjs` 从 `../src` import `.ts`（不走 `dist/`），在 npm 包里必然
-`ERR_MODULE_NOT_FOUND`；`analyze-thinking-lang.mjs` 与 `audit-chunk-limits.mjs` 不依赖 `src/`，
-一并停发以保持一致。
+**`tools/` 不随 npm 包发布**：五个工具只在插件仓库里可用。`audit-stream-firing.mjs`、
+`audit-loop-detection.mjs` 与 `audit-reminder-effect.mjs` 从 `../src` import `.ts`（不走
+`dist/`），在 npm 包里必然 `ERR_MODULE_NOT_FOUND`；`analyze-thinking-lang.mjs` 与
+`audit-chunk-limits.mjs` 不依赖 `src/`，一并停发以保持一致。
 
 **命中之后要再探一格**：下一格仍是思考增量才掐，换成正文、工具调用或流已结束就放行——命中行
 本来就是那段思考的最后一句时，掐它是误伤。掐断的三件事缺一不可：补 `block-end`（带该块的完整
