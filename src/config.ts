@@ -69,6 +69,17 @@ export interface Config {
    */
   streamCut?: StreamCutMode
   /**
+   * 退化命中时是否主动压缩上下文（默认 `false`）。
+   *
+   * 这是设计方案 §九 暂缓的那一步：`streamCut` 只能在输出层面刹车，已经脏掉的历史仍在
+   * 上下文里、每轮都被重新读一遍；主动压缩把它挤出去，才谈得上「治本」。
+   * 压缩走 `ctx.compaction.compact(agent, 'context-overflow', signal)` —— 该档位的语义是
+   * 「在阈值以下也强制做一次平衡压缩」，正是这里需要的。
+   *
+   * 默认关闭：能否真打断循环尚未实测（`compactRegion` 只压指定区间）。
+   */
+  autoCompact?: boolean
+  /**
    * 掐断后续跑请求的正文（默认由 `cut/messages.ts` 组装，含当次读数）。
    *
    * 配了就用配的：那是一段纯文本，没有占位符，因此覆盖之后读数不再出现在文案里
@@ -124,6 +135,8 @@ export interface ResolvedConfig {
   readonly streamCutResumeText: string | undefined
   /** 见 {@link Config.streamCutMaxResumes}。 */
   readonly streamCutMaxResumes: number
+  /** 见 {@link Config.autoCompact}。 */
+  readonly autoCompact: boolean
 }
 
 /** Loader 用于校验 `cordis.patch.yml` 里 `config` 段的 schema。 */
@@ -136,6 +149,7 @@ export const Config: Schema<Config> = Schema.object({
   streamCut: Schema.union(STREAM_CUT_MODES),
   streamCutResumeText: Schema.string(),
   streamCutMaxResumes: Schema.number(),
+  autoCompact: Schema.boolean(),
 })
 
 /**
@@ -238,6 +252,7 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
   const streamCutResumeText = optionalText('streamCutResumeText', config.streamCutResumeText)
   // 0 合法：它表达「只掐不续」（见 `Config.streamCutMaxResumes`），不是越界值。
   const streamCutMaxResumes = times('streamCutMaxResumes', config.streamCutMaxResumes ?? STREAM_CUT_MAX_RESUMES)
+  const autoCompact = config.autoCompact === true
   return {
     driftThreshold,
     repetitionThreshold,
@@ -245,6 +260,7 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     loopWindowHits,
     silentTurn,
     streamCut,
+    autoCompact,
     streamCutResumeText,
     streamCutMaxResumes,
   }

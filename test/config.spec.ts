@@ -23,6 +23,7 @@ describe('resolveConfig', () => {
       streamCut: STREAM_CUT_MODE,
       streamCutResumeText: undefined,
       streamCutMaxResumes: STREAM_CUT_MAX_RESUMES,
+      autoCompact: false,
     })
   })
 
@@ -40,6 +41,7 @@ describe('resolveConfig', () => {
       streamCut: STREAM_CUT_MODE,
       streamCutResumeText: undefined,
       streamCutMaxResumes: STREAM_CUT_MAX_RESUMES,
+      autoCompact: false,
     })
   })
 

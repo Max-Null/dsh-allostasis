@@ -52,7 +52,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+// 只为 `ctx.compaction` 的类型增强（运行时由内核提供，注入在 `inject` 里没有它——见 compactAgent）
+import type {} from '@deepseek-ai/dsh-compaction'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import { anchorText } from './anchor.ts'
 import { Config, resolveConfig, type ResolvedConfig } from './config.ts'
@@ -304,7 +306,15 @@ export function apply(ctx: Context, config: Config = {}): void {
       const drift = driftMessage(agent.session, sample, resolved, anchorThrottles)
       if (drift !== undefined) appended.push(drift)
       const loop = loopMessage(agent.session, sample, resolved, loopTrackers, loopThrottles)
-      if (loop !== undefined) appended.push(loop)
+      if (loop !== undefined) {
+        appended.push(loop)
+        // 退化命中时除了提醒，再救一次：压缩上下文，把已经脏掉的那段历史挤出去。
+        // 这是设计方案 §九 暂缓的那一步——`streamCut` 只在输出层刹车，脏历史还在每轮被重读。
+        // 压缩失败不能拖垮这一步（与上面整段 try 同一个理由），所以单独包一层。
+        if (resolved.autoCompact && !signal.aborted) {
+          await compactAgent(ctx, agent, signal)
+        }
+      }
     } catch (error: unknown) {
       // 取数失败时窗口状态尚未推进（`trackLoop` 的写入在判定之后），这一步因此等价于
       // `insufficient`：既不算命中也不算未命中，与「样本太短」同一处理。
@@ -319,4 +329,26 @@ export function apply(ctx: Context, config: Config = {}): void {
   }, { prepend: true })
 
   installSilentTurn(ctx, resolved, silentSteers, cutLedgers)
+}
+
+/**
+ * 退化命中后的自救：强制压缩一次上下文。
+ *
+ * 用 `context-overflow` 档位——它的语义是「在阈值以下也强制做一次有用的平衡压缩」，正是这里
+ * 需要的：自动压力阈值是**窗口的 80%**（`thresholdRatio`），而退化早在三成用量就发生了，
+ * 等阈值等于不救。`pressure` 档位走正常阈值判定，在这里没有意义。
+ *
+ * 压缩失败不传播：与 pre-step 里那段 try 同源——判据侧的故障不该把这一步变成 turn 的错误终点。
+ */
+async function compactAgent(ctx: Context, agent: Agent, signal: AbortSignal): Promise<void> {
+  try {
+    const result = await ctx.compaction.compactIfNeeded(agent, 'context-overflow', signal)
+    ctx.logger?.info?.(
+      `${name}: 退化命中后已压缩（${result === null ? '无可压区间' : 'ok'}）`,
+    )
+  } catch (error: unknown) {
+    ctx.logger?.warn?.(
+      `${name}: 退化命中后的压缩失败（${error instanceof Error ? error.message : String(error)}）；继续本步`,
+    )
+  }
 }

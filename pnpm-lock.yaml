@@ -36,6 +36,9 @@ importers:
       '@deepseek-ai/dsh-client-ui-slots':
         specifier: ^0.1.7-rc.2
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-compaction':
+        specifier: ^0.1.7-rc.2
+        version: 0.1.7-rc.2(3ef027a023ea72624ba751f327a20ac9)
       '@deepseek-ai/dsh-llm':
         specifier: ^0.1.7-rc.2
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)
