@@ -71,8 +71,13 @@ import { admitPerTurn, type PerTurnThrottleState } from './throttle.ts'
 
 export { anchorText, Config, name }
 
-/** 需要 `agents` 服务来接收 `agent/pre-step` 与 `agent/turn-stopping` 事件。 */
-export const inject = ['agents']
+/**
+ * 需要的服务：`agents` 接收 `agent/pre-step` 与 `agent/turn-stopping` 事件；
+ * `compaction` 只有开了 `autoCompact` 才用得上，但**必须在这里声明**——cordis 的
+ * `ctx.<service>` 仅在 inject 声明后才存在，漏了就是运行时 undefined（类型检查看不出来），
+ * 而压缩调用又被 try 包着，失败只留一条 warn，表现为「loop 命中了却什么都没发生」。
+ */
+export const inject = ['agents', 'compaction']
 
 /**
  * 组装一期的语言漂移提醒。
