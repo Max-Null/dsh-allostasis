@@ -167,6 +167,8 @@ browser half folds that verdict from the event stream and shows a notice beneath
 |---|
 | ![流内掐断](docs/shots/degeneration-cut-demo.png) |
 
+> **关于图中那块「上下文注入」**：它由 `@max-null/dsh-node-appearance` 渲染，**不是本插件自带的界面**。本插件的职责只是把那条提醒注入到请求末尾；没装那个插件时，提醒照样注入、模型照样看到，只是不会以这种折叠块的形式显示出来。
+
 **同一个回合里最多续跑 3 次**（`streamCutMaxResumes`）：三次打断都没让它回到正轨时，插件不再推它，那一步就停在被截断的地方——继续推只是拿 token 换一个不会到来的收敛。
 
 **一处用户可见的副作用**：被掐断的那一步没有 `usage` 字段，**该轮的 token 摘要因此不显示**
