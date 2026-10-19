@@ -2,6 +2,20 @@
 
 本插件属于 **`@max-null/*` 插件系列**——这一系列共同构成 **[SSID（思灵 · Seek Soul in Darkness）](https://github.com/Max-Null/seek-soul-in-darkness)** 桌面体验。SSID 是整合它们的盒，已发布在 npm 上的同系列包有：`dsh-allostasis` · `dsh-achievements` · `dsh-capture` · `dsh-chat-rail` · `dsh-chinese-thinking` · `dsh-draft-polish` · `dsh-guardian` · `dsh-habit` · `dsh-memory` · `dsh-node-appearance` · `dsh-plugin-center` · `dsh-quick-toolbar` · `dsh-skill-mcp-center` · `dsh-skills` · `dsh-tone-layer`（另有几个随 SSiD 一起分发的内置插件不在 npm 上）。
 
+## 你是不是遇到了这些
+
+- 模型在思考里开始重复：「好。」「做。」「执行。」一遍又一遍，**停不下来**；
+- 界面一直显示「思考中」，但**没有任何产出**，也不调用工具；
+- 长会话跑到后半段，回答**越来越短、越来越像复读**；
+- 同一个动作被重复几十次，token 烧掉了但事情没推进；
+- 长对话里助手**忽然改说英文**（中文锚定要治的就是这个）。
+
+这些是**推理退化**（reasoning degeneration）的典型表现：不挑模型、不挑任务，**长上下文 + 高 reasoning effort** 时最容易撞上。它和「上下文用满了」不是一回事——实测里压缩到 28% 的上下文照样会退化。
+
+**本插件就是干这个的**：检测（每步读一次思考）+ 干预（退化提醒 / 掐断复读并续跑 / 空回合兜底）。检测与掐断都是**流内**做的，不依赖人工中止。
+
+> 英文简介见下方 English section。
+
 This plugin belongs to the **`@max-null/*` family** — a set of plugins that together form the **[SSID (思灵 · Seek Soul in Darkness)](https://github.com/Max-Null/seek-soul-in-darkness)** desktop experience.
 
 Allostasis for the DeepSeek Harness — session self-regulation rather than monitoring.
