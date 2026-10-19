@@ -1,6 +1,6 @@
 {
   "name": "@max-null/dsh-allostasis",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "应变（allostasis）：会话状态的自我调节——语言漂移的检测与锚定、推理退化的检测与提醒、空回合兜底，以及生成中的复读掐断",
   "license": "MIT",
   "publishConfig": {

@@ -72,12 +72,15 @@ import { admitPerTurn, type PerTurnThrottleState } from './throttle.ts'
 export { anchorText, Config, name }
 
 /**
- * 需要的服务：`agents` 接收 `agent/pre-step` 与 `agent/turn-stopping` 事件；
- * `compaction` 只有开了 `autoCompact` 才用得上，但**必须在这里声明**——cordis 的
- * `ctx.<service>` 仅在 inject 声明后才存在，漏了就是运行时 undefined（类型检查看不出来），
- * 而压缩调用又被 try 包着，失败只留一条 warn，表现为「loop 命中了却什么都没发生」。
+ * 需要 `agents` 服务来接收 `agent/pre-step` 与 `agent/turn-stopping` 事件。
+ *
+ * **`compaction` 不在这里**：它是可选服务。0.2.1 起 `web-app` 在 host 平面把
+ * `compaction-basic` 设成 `disabled: true`，压缩改由 agent preset 提供，而默认 preset
+ * 并不提供它——写进 inject 会让整个插件 `pending (waiting for service: compaction)`、
+ * 永不激活，连 `streamCut` 都跟着失效（2026-10-19 在他机实测踩到）。
+ * 按官方约定用 `ctx.get('compaction')` 取，拿不到就跳过压缩。
  */
-export const inject = ['agents', 'compaction']
+export const inject = ['agents']
 
 /**
  * 组装一期的语言漂移提醒。
@@ -340,14 +343,23 @@ export function apply(ctx: Context, config: Config = {}): void {
  * 退化命中后的自救：强制压缩一次上下文。
  *
  * 用 `context-overflow` 档位——它的语义是「在阈值以下也强制做一次有用的平衡压缩」，正是这里
- * 需要的：自动压力阈值是**窗口的 80%**（`thresholdRatio`），而退化早在三成用量就发生了，
- * 等阈值等于不救。`pressure` 档位走正常阈值判定，在这里没有意义。
+ * 需要的：自动压力阈值是 `min(窗口 × 0.8, 预算)`，而退化早在三成用量就发生了，等阈值等于不救。
+ * `pressure` 档位走正常阈值判定，在这里没有意义。
  *
- * 压缩失败不传播：与 pre-step 里那段 try 同源——判据侧的故障不该把这一步变成 turn 的错误终点。
+ * 服务用 `ctx.get` 而不是 `ctx.compaction`：压缩是**可选**能力（0.2.1 起默认 preset 不提供它），
+ * 取不到就跳过——不能为了一条可选路径阻塞整个插件的加载。取不到时只记一条 info，便于事后确认
+ * 「是没触发还是没得压」。
+ *
+ * 压缩失败同样不传播：与 pre-step 里那段 try 同源——判据侧的故障不该把这一步变成 turn 的错误终点。
  */
 async function compactAgent(ctx: Context, agent: Agent, signal: AbortSignal): Promise<void> {
+  const compaction = ctx.get('compaction')
+  if (compaction === undefined) {
+    ctx.logger?.info?.(`${name}: 退化命中，但本会话没有 compaction 服务（默认 preset 不提供），跳过压缩`)
+    return
+  }
   try {
-    const result = await ctx.compaction.compactIfNeeded(agent, 'context-overflow', signal)
+    const result = await compaction.compactIfNeeded(agent, 'context-overflow', signal)
     ctx.logger?.info?.(
       `${name}: 退化命中后已压缩（${result === null ? '无可压区间' : 'ok'}）`,
     )
