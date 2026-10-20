@@ -52,6 +52,39 @@ export function streamCutResumeText(turn: number, record: CutRecord, configured?
 }
 
 /**
+ * 续跑配额用完时注入的收尾请求：让模型把工作整理成交接材料。
+ *
+ * 配额用完说明「再续跑一次也不会收敛」，此前什么都不注入、那一步就此停住——用户拿到的
+ * 是一片空白。改成要求写交接材料有两个好处：它是**结构化产出**（空转期的模型写「已完成 /
+ * 未完成 / 下一步」比「想下一步做什么」容易），而且**给使用者留了换会话的接续点**。
+ *
+ * 刻意要求「写完就停」：这一步之后不再执行新操作，否则等于换一种方式继续空转。
+ * @param turn - 发生掐断的回合。
+ * @param record - 掐断时的现场读数。
+ * @param cap - 配额说明，由调用方按「上限为 0」与「运行时耗尽」区分。
+ * @param configured - 配置项 `streamCutHandoverText`；给了就整段用它。
+ * @returns 模型读到的正文。
+ */
+export function streamCutHandoverText(
+  turn: number,
+  record: CutRecord | undefined,
+  cap: string,
+  configured?: string,
+): UserMessage {
+  if (configured !== undefined) return pluginNotice(configured, `流内掐断 · turn ${turn} · 改为要求交接材料`)
+  const ratio = record === undefined ? '' : `（重复率 ${(record.reading.ratio * 100).toFixed(0)}%）`
+  const text = `⚠️ 应变：turn ${turn} 这一轮已经因为推理退化被截断多次${ratio}——${cap}。`
+    + '继续用原来的方式思考不会收敛，所以这一步不再续跑。\n\n'
+    + '现在请把手头的工作整理成一份**交接材料**，分四段写清楚：\n\n'
+    + '1. **已经完成**：改了哪些文件、执行了哪些命令、结果如何。\n'
+    + '2. **未完成**：还剩什么没做，卡在哪里。\n'
+    + '3. **下一步**：如果换一个人接手，他应该先做哪一件事——只写一条，要具体。\n'
+    + '4. **关键上下文**：接手时必须知道的信息（路径、命令、已定的决策、踩过的坑）。\n\n'
+    + '写完这一段就结束，**不要再执行新的操作**。'
+  return pluginNotice(text, `流内掐断 · turn ${turn} · 续跑配额用尽 · 改为要求交接材料`)
+}
+
+/**
  * 组装轨迹页那一行叙述。
  *
  * 与正文分开：正文给模型读，摘要给人读（`pluginNotice` 的 `summary`），两者的取舍不同——

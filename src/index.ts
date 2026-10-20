@@ -58,7 +58,7 @@ import type {} from '@deepseek-ai/dsh-compaction'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import { anchorText } from './anchor.ts'
 import { Config, resolveConfig, type ResolvedConfig } from './config.ts'
-import { streamCutNotice } from './cut/messages.ts'
+import { streamCutHandoverText, streamCutNotice } from './cut/messages.ts'
 import { cutBeforeStopping, recordCut, type CutLedger } from './cut/state.ts'
 import { installStreamCut } from './cut/stream.ts'
 import { measureThinking, verdict } from './drift.ts'
@@ -200,7 +200,15 @@ function installSilentTurn(
           const cap = resolved.streamCutMaxResumes === 0
             ? '本 turn 续跑上限为 0（只掐不续）'
             : `本 turn 续跑已达上限（${resolved.streamCutMaxResumes} 次）`
-          console.debug(`[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定 · ${cap}，不再续跑`)
+          console.debug(`[${name}] 流内掐断 · turn ${turn} · 跳过空回合判定 · ${cap}，改为要求交接材料`)
+          // 不再无声停住：要求它把工作整理成交接材料，既是结构化产出，也给使用者留了换会话的接续点。
+          try {
+            agent.steer(streamCutHandoverText(turn, record, cap))
+          } catch (error: unknown) {
+            ctx.logger?.warn?.(
+              `${name}: 交接材料请求注入失败（${error instanceof Error ? error.message : String(error)}）`,
+            )
+          }
           return
         }
         if (!cut.resume) {

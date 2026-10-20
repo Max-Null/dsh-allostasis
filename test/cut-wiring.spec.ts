@@ -276,8 +276,8 @@ describe('每 turn 的续跑上限（§九.7）', () => {
     // 掐断本身是收益，它不受上限约束——四次流各补了一次块。
     expect(emitted.filter(chunk => chunk.type === 'block-end')).toHaveLength(4)
     expect(emitted.filter(chunk => chunk.type === 'finish')).toHaveLength(4)
-    // 停的只是续跑。
-    expect(steered).toHaveLength(3)
+    // 前三次是续跑，第四次配额用尽后改为要求交接材料。
+    expect(steered).toHaveLength(4)
     expect(debugLines.filter(line => line.includes('续跑一步'))).toHaveLength(3)
     expect(debugLines.filter(line => line.includes('续跑已达上限'))).toHaveLength(1)
     // 超限那一刻的静默仍然是本插件造成的，不能退回去判空回合。
@@ -289,7 +289,7 @@ describe('每 turn 的续跑上限（§九.7）', () => {
     const session = sessionOf([reasonOnlyEvent(9, 1)])
     const { emitted, steered } = await bursts(hooks, session, 9, 6)
     expect(emitted.filter(chunk => chunk.type === 'block-end')).toHaveLength(6)
-    expect(steered).toHaveLength(3)
+    expect(steered).toHaveLength(6)
     expect(debugLines.filter(line => line.includes('续跑已达上限'))).toHaveLength(3)
   })
 
@@ -297,7 +297,7 @@ describe('每 turn 的续跑上限（§九.7）', () => {
     const { hooks } = harness({ streamCut: 'cut', silentTurn: 'steer', streamCutMaxResumes: 1 })
     const session = sessionOf([reasonOnlyEvent(9, 1)])
     const { steered } = await bursts(hooks, session, 9, 3)
-    expect(steered).toHaveLength(1)
+    expect(steered).toHaveLength(3)
   })
 
   it('换一个 turn 配额重新给满——上一次 turn 用完不影响这一次', async () => {
@@ -319,7 +319,7 @@ describe('每 turn 的续跑上限（§九.7）', () => {
     expect(debugLines.some(line => line.includes('本 turn 第 2/3 次'))).toBe(true)
   })
 
-  it('上限 0 = 只掐不续：掐断照旧、一次都不 steer、静默仍归本插件', async () => {
+  it('上限 0：掐断照旧、只发交接请求、静默仍归本插件', async () => {
     const { hooks } = harness({ streamCut: 'cut', silentTurn: 'steer', streamCutMaxResumes: 0 })
     const session = sessionOf([reasonOnlyEvent(9, 1)])
     const { emitted, steered } = await bursts(hooks, session, 9, 3)
@@ -327,8 +327,8 @@ describe('每 turn 的续跑上限（§九.7）', () => {
     // 掐断本身是收益，它不受上限约束——三次流各补了一次块、各终止了一次上游。
     expect(emitted.filter(chunk => chunk.type === 'block-end')).toHaveLength(3)
     expect(emitted.filter(chunk => chunk.type === 'finish')).toHaveLength(3)
-    // 改动的只是「不往上下文里注入消息」。
-    expect(steered).toHaveLength(0)
+    // 续跑一次都不发；每条流改发一条交接请求（结构化收尾，不是继续空转）。
+    expect(steered).toHaveLength(3)
     expect(debugLines.some(line => line.includes('续跑一步'))).toBe(false)
     // 那一步的静默仍然是我们造成的：跳过判定、不退回补一次生成。
     expect(debugLines.filter(line => line.includes('本 turn 续跑上限为 0（只掐不续）'))).toHaveLength(3)
@@ -342,6 +342,6 @@ describe('每 turn 的续跑上限（§九.7）', () => {
     const session = sessionOf([reasonOnlyEvent(9, 1), reasonOnlyEvent(10, 1)])
     await bursts(hooks, session, 9, 2)
     await feed(hooks, LOOP_STREAM)
-    expect(stopTurn(hooks, session, 10)).toHaveLength(0)
+    expect(stopTurn(hooks, session, 10)).toHaveLength(1)
   })
 })
