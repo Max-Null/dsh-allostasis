@@ -78,7 +78,16 @@ describe('streamCutHandoverText', () => {
     }
     expect(text).toContain('交接材料')
     expect(text).toContain('写成一个文件')
-    expect(text).toContain('handover-YYYY-MM-DD.md')
+  })
+
+  it('给定存放约定：工作区级 .dsh/handover 下按库名分目录，说不清归未分类', () => {
+    const text = textOf(streamCutHandoverText(7, record(), '本 turn 续跑已达上限（3 次）'))
+    expect(text).toContain('.dsh/handover/')
+    expect(text).toContain('库名')
+    expect(text).toContain('未分类')
+    // 两个被明确排除的位置：工作区根会散成荒地，库的 docs/ 是长期文档的地盘。
+    expect(text).toContain('工作区根')
+    expect(text).toContain('docs/')
   })
 
   it('要求用代码块给出可复制的续接提示词，里面带文件的完整路径', () => {
