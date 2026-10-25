@@ -1,6 +1,6 @@
 {
   "name": "@max-null/dsh-allostasis",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "应变（allostasis）：模型复读、推理退化、思考死循环的检测与掐断——语言漂移锚定、退化提醒、空回合兜底，以及生成中截断复读并续跑",
   "license": "MIT",
   "publishConfig": {
