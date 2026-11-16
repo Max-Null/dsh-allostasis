@@ -14,10 +14,10 @@ describe('anchorText', () => {
     expect(text).toContain(String(metrics.words))
   })
 
-  it('点明引用英文标识符是正常的——否则模型会不敢写代码符号', () => {
+  it('点明引用不算——否则模型会不敢写代码符号、不敢抄原文', () => {
     const text = anchorText(1, 1, measureThinking('placeholder'))
-    expect(text).toContain('引用英文标识符是正常的')
-    expect(text).toContain('整句英文')
+    expect(text).toContain('引用英文标识符')
+    expect(text).toContain('抄一段英文文档都不算漂移')
   })
 
   it('给出的位置来自被检测的那一步，而不是当前步', () => {

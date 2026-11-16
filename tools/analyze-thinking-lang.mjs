@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 /**
- * 思考块语言漂移分析 — 读一份 DSH 会话日志（`session.v3.jsonl`），逐 step 量「思考用什么语言」。
+ * 思考块语言漂移分析 — 读一份 DSH 会话日志（`session.v3.jsonl` 或 v4），逐 step 量「思考用什么语言」。
  *
  * 判据：**英文功能词密度** = 英文功能词数 / 英文词数，且**英文词数 ≥ 50** 才判定。
  *   中文期（中位 0.012）与英文期（中位 0.273–0.389）以 **0.15** 干净分开。
+ *
+ * 口径与 `src/drift.ts` 相同，含 2026-11-16 的三条修正：剥掉明确标出的引用区、
+ *   标识符不进分母、汉字数 ≥ 英文词数时直接判中文。复核数据见
+ *   `docs/排查/2026-11-16-语言漂移把英文引用判成漂移.md`。
  *
  * 为什么要词数门槛：中文期唯一的越线点（Turn 1 step 13，密度 0.192）只有 26 个英文词——
  *   小样本让密度失真。加门槛后中文期零越线、英文期全部越线。
@@ -15,8 +19,8 @@
  *     反而有大量 1–5 的短思考。它测的是「引用了多长的代码」，不是「用什么语言思考」。
  *
  * 用法：
- *   node analyze-thinking-lang.mjs <session.v3.jsonl>             # 逐 step 明细
- *   node analyze-thinking-lang.mjs <session.v3.jsonl> --summary   # 只报每 turn 汇总与首个越线点
+ *   node analyze-thinking-lang.mjs <session.jsonl>             # 逐 step 明细
+ *   node analyze-thinking-lang.mjs <session.jsonl> --summary   # 只报每 turn 汇总与首个越线点
  *
  * 退出码：0 = 未发现漂移；1 = 有 step 越线；2 = 用法错误或读不出 reasoning 文本。
  *
@@ -42,10 +46,35 @@ const DRIFT_THRESHOLD = 0.15
 /** 判定所需的最少英文词数；低于此值只报数不判定，避免小样本把密度算飞。 */
 const MIN_WORDS = 50
 
+/** 引用区的标记形态；单引号不列（英文缩写会连带被剥）。 */
+const QUOTED = [
+  /```[\s\S]*?```/g,
+  /`[^`\n]*`/g,
+  /「[^」\n]*」/g,
+  /『[^』\n]*』/g,
+  /“[^”\n]*”/g,
+  /"[^"\n]*"/g,
+]
+
+/** 剥掉围栏代码块、行内代码与成对引号内的内容。 */
+function stripQuotations(text) {
+  return QUOTED.reduce((carry, pattern) => carry.replace(pattern, ' '), text)
+}
+
+/** 只留自然语言英文词：排除单字母、全大写缩写、驼峰名。 */
+function naturalWords(text) {
+  return (text.match(/[A-Za-z]+(?:'[a-z]+)?/g) || []).filter((word) => {
+    if (word.length < 2) return false
+    if (word === word.toUpperCase()) return false
+    if (/[A-Z]/.test(word.slice(1))) return false
+    return true
+  })
+}
+
 /** 从一条思考文本算出各量。`funcDensity` 是判据，其余保留用于诊断与对比。 */
 function metrics(text) {
   const cjk = (text.match(/[\u4e00-\u9fff]/g) || []).length
-  const words = text.match(/[A-Za-z][A-Za-z'-]*/g) || []
+  const words = naturalWords(stripQuotations(text))
   const funcw = words.filter(w => FUNC.has(w.toLowerCase())).length
   const segs = text.split(/[\u4e00-\u9fff]+/)
   let maxRun = 0
@@ -64,16 +93,32 @@ function metrics(text) {
   }
 }
 
-/** 三态判定：词数不够时不下结论。 */
+/** 三态判定：词数不够时不下结论，汉字比英文词多时判中文（引用再多也不算漂移）。 */
 function verdict(s) {
   if (s.words < MIN_WORDS) return '样本不足'
+  if (s.cjk >= s.words) return '中文'
   return s.funcDensity >= DRIFT_THRESHOLD ? '漂移' : '中文'
+}
+
+/** 取一条 `assistant/message` 的思考原文；v3 走 reasoning-chunks，v4 走 content 的 reasoning 块。 */
+function reasoningText(data) {
+  const texts = []
+  for (const rec of Array.isArray(data.stream) ? data.stream : []) {
+    if (!rec || rec.type !== 'reasoning-chunks' || !Array.isArray(rec.texts)) continue
+    // 逐元素拼接：texts 的元素数等于该步输出 token 数，展开调用会超引擎实参上限（见 src/thinking.ts）。
+    for (const delta of rec.texts) texts.push(delta)
+  }
+  const content = data.message && Array.isArray(data.message.content) ? data.message.content : []
+  for (const block of content) {
+    if (block && block.type === 'reasoning' && typeof block.text === 'string') texts.push(block.text)
+  }
+  return texts.join('')
 }
 
 const file = process.argv[2]
 const summaryOnly = process.argv.includes('--summary')
 if (!file) {
-  console.error('用法：node analyze-thinking-lang.mjs <session.v3.jsonl> [--summary]')
+  console.error('用法：node analyze-thinking-lang.mjs <session.jsonl> [--summary]')
   process.exit(2)
 }
 
@@ -84,13 +129,7 @@ for (const line of readFileSync(file, 'utf8').split('\n')) {
   try { ev = JSON.parse(line) } catch { continue }
   if (ev.type !== 'assistant/message') continue
   const d = ev.data || {}
-  const texts = []
-  for (const rec of Array.isArray(d.stream) ? d.stream : []) {
-    if (!rec || rec.type !== 'reasoning-chunks' || !Array.isArray(rec.texts)) continue
-    // 逐元素拼接：texts 的元素数等于该步输出 token 数，展开调用会超引擎实参上限（见 src/thinking.ts）。
-    for (const delta of rec.texts) texts.push(delta)
-  }
-  steps.push({ turn: d.turn, step: d.step, ...metrics(texts.join('')) })
+  steps.push({ turn: d.turn, step: d.step, ...metrics(reasoningText(d)) })
 }
 
 const withThinking = steps.filter(s => s.chars > 0)
